@@ -1,431 +1,235 @@
-import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithCustomToken, 
-  signInAnonymously, 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  onSnapshot,
-  collection,
-  query,
-  updateDoc
-} from 'firebase/firestore';
-import { 
-  ShieldCheck, 
-  Building, 
-  Search, 
-  Check, 
-  X,
-  LogOut,
-  Loader2,
-  Library,
-  Sparkles,
-  LayoutDashboard,
-  Mail,
-  Lock,
-  ArrowRight,
-  Plus,
-  Layers,
-  Menu
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NY Compliance Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; transition: all 0.3s ease; }
+        .nav-active { background-color: #2563eb; color: white; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3); }
+        .page-transition { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
 
-// --- Firebase Configuration ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ny-compliance-v5';
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState('login'); 
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  
-  const [onboardData, setOnboardData] = useState({ 
-    districtName: '', 
-    userName: '', 
-    buildings: ['High School', 'Middle School', 'Elementary'] 
-  });
-  const [newBuilding, setNewBuilding] = useState('');
-
-  const [userData, setUserData] = useState(null);
-  const [selectedBuilding, setSelectedBuilding] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [notification, setNotification] = useState(null);
-  const [instances, setInstances] = useState([]);
-  const [globalSuggestions, setGlobalSuggestions] = useState([]);
-  const [activeView, setActiveView] = useState('checklist');
-
-  useEffect(() => {
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        try {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } catch (e) {
-          await signInAnonymously(auth);
-        }
-      } else {
-        await signInAnonymously(auth);
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (!u) setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
-    const unsubProfile = onSnapshot(profileRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setUserData(data);
-        setIsAdmin(data.role === 'admin');
-        if (data.buildings?.length > 0 && !selectedBuilding) {
-          setSelectedBuilding(data.buildings[0]);
-        }
-        setAuthMode('authenticated');
-      } else {
-        setAuthMode('onboard');
-      }
-      setLoading(false);
-    }, (err) => console.error("Profile Error", err));
-
-    const instRef = collection(db, 'artifacts', appId, 'public', 'data', 'instances');
-    const unsubInst = onSnapshot(query(instRef), (snap) => {
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setInstances(all.filter(i => i.ownerId === user.uid || isAdmin));
-    }, (err) => console.error("Instances Error", err));
-
-    const suggRef = collection(db, 'artifacts', appId, 'public', 'data', 'suggestions');
-    const unsubSugg = onSnapshot(query(suggRef), (snap) => {
-      setGlobalSuggestions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Library Error", err));
-
-    return () => { unsubProfile(); unsubInst(); unsubSugg(); };
-  }, [user, isAdmin]);
-
-  const showMsg = (m) => { setNotification(m); setTimeout(() => setNotification(null), 3000); };
-
-  const handleAuthAction = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      if (authMode === 'signup') {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
-    } catch (err) {
-      showMsg(err.message.replace("Firebase: ", ""));
-      setLoading(false);
-    }
-  };
-
-  const completeOnboarding = async () => {
-    if (!onboardData.userName || !onboardData.districtName) {
-      showMsg("Required fields missing");
-      return;
-    }
-    setLoading(true);
-    try {
-      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
-      await setDoc(profileRef, { 
-        ...onboardData, 
-        role: 'user',
-        uid: user.uid,
-        createdAt: Date.now()
-      });
-      setAuthMode('authenticated');
-    } catch (err) {
-      showMsg("Setup failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleTask = async (id) => {
-    const task = instances.find(i => i.id === id);
-    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'instances', id);
-    await updateDoc(ref, { completed: !task.completed });
-  };
-
-  const importTask = async (task) => {
-    const instId = `${user.uid}-${selectedBuilding}-${task.name}`.replace(/\s+/g, '-').toLowerCase();
-    const instRef = doc(db, 'artifacts', appId, 'public', 'data', 'instances', instId);
-    await setDoc(instRef, {
-        ...task,
-        building: selectedBuilding,
-        ownerId: user.uid,
-        completed: false,
-        importedAt: Date.now()
-    });
-    showMsg(`Synced to ${selectedBuilding}`);
-  };
-
-  if (loading && !user) return (
-    <div className="h-screen w-full bg-slate-50 flex items-center justify-center">
-      <Loader2 className="animate-spin text-indigo-600" size={48}/>
+    <div id="app">
+        <!-- App content will be injected here by JavaScript -->
     </div>
-  );
 
-  // AUTH VIEW
-  if (!user || authMode === 'login' || authMode === 'signup') {
-    return (
-      <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center p-4 md:p-6 bg-gradient-to-br from-indigo-50 via-white to-slate-100">
-        <div className="max-w-md w-full animate-in fade-in zoom-in duration-300">
-          <div className="text-center mb-8 md:mb-10">
-            <div className="w-16 h-16 md:w-20 md:h-20 bg-indigo-600 rounded-2xl md:rounded-3xl flex items-center justify-center text-white mx-auto mb-4 shadow-xl shadow-indigo-200">
-              <ShieldCheck size={32} className="md:w-10 md:h-10" />
-            </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">NY Compliance</h1>
-            <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] mt-1">Facility Standards Manager</p>
-          </div>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-          <div className="bg-white p-6 md:p-10 rounded-3xl md:rounded-[2.5rem] shadow-2xl shadow-slate-200 border border-white">
-            <form onSubmit={handleAuthAction} className="space-y-4 md:space-y-5">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                  <input type="email" required className="w-full bg-slate-50 border-none rounded-xl md:rounded-2xl py-3 md:py-4 pl-12 pr-4 text-sm font-semibold focus:ring-2 ring-indigo-500 transition-all outline-none" value={email} onChange={e => setEmail(e.target.value)} />
-                </div>
-              </div>
+        // --- Configuration ---
+        const firebaseConfig = JSON.parse('{"apiKey": "", "authDomain": "", "projectId": "", "storageBucket": "", "messagingSenderId": "", "appId": ""}'); 
+        // Note: Real config is injected at runtime in the preview environment.
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                  <input type="password" required className="w-full bg-slate-50 border-none rounded-xl md:rounded-2xl py-3 md:py-4 pl-12 pr-4 text-sm font-semibold focus:ring-2 ring-indigo-500 transition-all outline-none" value={password} onChange={e => setPassword(e.target.value)} />
-                </div>
-              </div>
+        // --- State Management ---
+        let state = {
+            view: 'landing', // landing, dashboard, invite, docs
+            user: null,
+            isGenerating: false,
+            inviteEmail: '',
+            generatedInvite: '',
+            statusMsg: ''
+        };
 
-              <button disabled={loading} className="w-full py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-bold uppercase tracking-widest text-xs shadow-lg hover:bg-indigo-600 transition-all flex items-center justify-center gap-3 mt-4">
-                {loading ? <Loader2 className="animate-spin" size={18}/> : (authMode === 'login' ? 'Sign In' : 'Register')}
-                <ArrowRight size={18}/>
-              </button>
-            </form>
+        // --- Core Functions ---
+        function navigate(viewName) {
+            state.view = viewName;
+            render();
+            window.scrollTo(0, 0);
+        }
 
-            <div className="mt-6 md:mt-8 text-center">
-               <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-xs font-bold text-slate-500 hover:text-indigo-600">
-                 {authMode === 'login' ? "New user? Create an account" : "Have an account? Sign in"}
-               </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+        async function generateAIDraft() {
+            const email = document.getElementById('invite-email')?.value;
+            if (!email) return;
 
-  // ONBOARD VIEW
-  if (authMode === 'onboard') {
-    return (
-      <div className="min-h-screen bg-white flex flex-col lg:flex-row overflow-hidden">
-        <div className="lg:w-5/12 bg-slate-950 p-8 md:p-12 text-white flex flex-col justify-center lg:justify-between relative shrink-0">
-           <div className="relative z-10 text-center lg:text-left">
-              <Sparkles size={40} className="text-indigo-500 mb-6 mx-auto lg:mx-0" />
-              <h2 className="text-3xl md:text-5xl font-black leading-tight">Welcome</h2>
-              <p className="mt-4 text-slate-400 font-medium text-base md:text-lg">Set up your district and building hierarchy to begin.</p>
-           </div>
-        </div>
-        <div className="lg:w-7/12 p-6 md:p-12 overflow-y-auto bg-slate-50 flex-1">
-          <div className="max-w-xl mx-auto space-y-8 md:space-y-10">
-            <div className="space-y-4 md:space-y-6">
-              <h3 className="text-xl md:text-2xl font-bold text-slate-900">District Identity</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                <input placeholder="Your Name" className="w-full bg-white border border-slate-200 rounded-xl p-3 md:p-4 font-bold focus:ring-2 ring-indigo-500 outline-none" value={onboardData.userName} onChange={e => setOnboardData({...onboardData, userName: e.target.value})} />
-                <input placeholder="District Name" className="w-full bg-white border border-slate-200 rounded-xl p-3 md:p-4 font-bold focus:ring-2 ring-indigo-500 outline-none" value={onboardData.districtName} onChange={e => setOnboardData({...onboardData, districtName: e.target.value})} />
-              </div>
-            </div>
-            <div className="space-y-4 md:space-y-6">
-              <h3 className="text-xl md:text-2xl font-bold text-slate-900">Buildings</h3>
-              <div className="flex flex-wrap gap-2">
-                {onboardData.buildings.map((b, i) => (
-                  <span key={i} className="bg-slate-900 text-white px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-2">
-                    {b} <X size={14} className="cursor-pointer text-slate-500 hover:text-white" onClick={() => setOnboardData({...onboardData, buildings: onboardData.buildings.filter((_, idx) => idx !== i)})}/>
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input placeholder="Add building..." className="flex-1 bg-white border border-slate-200 rounded-xl p-3 md:p-4 font-bold focus:ring-2 ring-indigo-500 outline-none" value={newBuilding} onChange={e => setNewBuilding(e.target.value)} />
-                <button onClick={() => { if(newBuilding) setOnboardData({...onboardData, buildings: [...onboardData.buildings, newBuilding]}); setNewBuilding('') }} className="bg-indigo-600 text-white px-4 md:px-6 rounded-xl hover:bg-slate-900 transition-colors"><Plus/></button>
-              </div>
-            </div>
-            <button onClick={completeOnboarding} className="w-full py-4 md:py-5 bg-slate-900 text-white font-bold uppercase rounded-xl md:rounded-2xl hover:bg-indigo-600 transition-all text-sm tracking-widest">Start Managing</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+            state.isGenerating = true;
+            render();
 
-  // MAIN DASHBOARD
-  return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans flex-col md:flex-row">
-      {/* Desktop Sidebar / Mobile Nav */}
-      <aside className={`md:w-72 bg-slate-900 text-slate-400 flex flex-col shrink-0 border-r border-slate-800 transition-all z-40 fixed md:relative h-full md:h-auto ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-        <div className="p-8 flex-1 overflow-y-auto">
-          <div className="flex items-center gap-3 mb-12">
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold shrink-0">NY</div>
-            <div className="truncate">
-               <h2 className="text-white text-[10px] font-black uppercase tracking-widest truncate">{userData?.districtName || 'District'}</h2>
-               <p className="text-[10px] text-slate-500 font-bold truncate">{userData?.userName}</p>
-            </div>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden ml-auto text-slate-500"><X size={20}/></button>
-          </div>
+            const apiKey = ""; // API key provided by environment
+            const prompt = `Write a professional email invitation for a team member to join our New York Compliance Management platform. The recipient is ${email}. Keep it brief.`;
 
-          <nav className="space-y-2">
-            <button onClick={() => { setActiveView('checklist'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-xs font-bold transition-all ${activeView === 'checklist' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' : 'hover:bg-slate-800'}`}>
-              <LayoutDashboard size={18}/> Dashboard
-            </button>
-            <button onClick={() => { setActiveView('library'); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-xs font-bold transition-all ${activeView === 'library' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' : 'hover:bg-slate-800'}`}>
-              <Library size={18}/> Requirements
-            </button>
-          </nav>
-        </div>
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const data = await response.json();
+                state.generatedInvite = data.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate.";
+            } catch (err) {
+                console.error(err);
+                state.generatedInvite = "Error connecting to AI service.";
+            } finally {
+                state.isGenerating = false;
+                render();
+            }
+        }
 
-        <div className="p-6">
-          <button onClick={() => signOut(auth)} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-800 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-900/40 transition-all"><LogOut size={16}/> Logout</button>
-        </div>
-      </aside>
+        function showToast(msg) {
+            state.statusMsg = msg;
+            render();
+            setTimeout(() => { state.statusMsg = ''; render(); }, 3000);
+        }
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        {/* Responsive Header */}
-        <header className="h-16 md:h-20 bg-white border-b px-4 md:px-8 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3 md:gap-4 flex-1">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden text-slate-400 p-2"><Menu size={24}/></button>
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
-              <Building size={16} className="text-slate-400 shrink-0"/>
-              <select className="bg-transparent text-xs md:text-sm font-bold text-slate-700 outline-none w-24 md:w-auto" value={selectedBuilding} onChange={e => setSelectedBuilding(e.target.value)}>
-                {userData?.buildings?.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-          </div>
-          
-          <div className="relative w-40 md:w-72 hidden sm:block">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={16}/>
-            <input placeholder="Search..." className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 pl-10 pr-4 text-xs font-medium focus:ring-2 ring-indigo-500 outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-          </div>
-        </header>
-
-        {/* Dynamic Content */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
-          {notification && (
-            <div className="fixed top-6 left-1/2 -translate-x-1/2 md:translate-x-0 md:left-auto md:right-6 md:top-auto md:bottom-6 bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-2 animate-in slide-in-from-top-4 md:slide-in-from-bottom-4 z-50">
-              <Sparkles size={14} className="text-indigo-400"/>
-              <span className="text-[10px] font-bold uppercase tracking-widest">{notification}</span>
-            </div>
-          )}
-
-          {activeView === 'checklist' && (
-            <div className="max-w-4xl mx-auto space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-800 leading-none">{selectedBuilding}</h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Status Overview</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase">
-                    {instances.filter(i => i.building === selectedBuilding && i.completed).length} / {instances.filter(i => i.building === selectedBuilding).length} Tasks
-                  </span>
-                </div>
-              </div>
-              
-              <div className="grid gap-3">
-                {instances.filter(i => i.building === selectedBuilding && i.name.toLowerCase().includes(searchTerm.toLowerCase())).map(task => (
-                  <div key={task.id} className={`bg-white border rounded-2xl p-4 md:p-5 flex items-center gap-4 transition-all ${task.completed ? 'opacity-50 border-transparent shadow-none' : 'hover:border-indigo-200 hover:shadow-sm border-slate-100'}`}>
-                    <button onClick={() => toggleTask(task.id)} className={`w-10 h-10 md:w-12 md:h-12 rounded-xl border-2 flex items-center justify-center transition-all shrink-0 ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-100 bg-slate-50 text-transparent hover:border-indigo-300'}`}>
-                      <Check size={20} strokeWidth={3}/>
-                    </button>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[8px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-tighter shrink-0">{task.category}</span>
-                        <h4 className={`font-bold text-slate-800 text-sm truncate ${task.completed ? 'line-through' : ''}`}>{task.name}</h4>
-                      </div>
-                      <p className="text-[10px] text-slate-400 font-medium uppercase mt-1 tracking-wider truncate">{task.authority} • {task.frequency}</p>
+        // --- Templates ---
+        function Landing() {
+            return `
+                <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center page-transition">
+                    <div class="bg-blue-600 p-5 rounded-3xl mb-8 shadow-2xl">
+                        <i data-lucide="shield" class="text-white w-12 h-12"></i>
                     </div>
-                  </div>
-                ))}
-                
-                {instances.filter(i => i.building === selectedBuilding).length === 0 && (
-                  <div className="text-center py-12 md:py-16 bg-white border-2 border-dashed border-slate-100 rounded-3xl">
-                    <Layers className="mx-auto text-slate-200 mb-3" size={32}/>
-                    <p className="text-slate-400 font-bold text-xs uppercase">No active tasks</p>
-                    <button onClick={() => setActiveView('library')} className="mt-4 text-xs font-bold text-indigo-600 hover:underline">Browse Requirements</button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+                    <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4">NY Compliance Pro</h1>
+                    <p class="text-lg text-slate-600 mb-10 max-w-md">The professional standard for tracking New York state regulatory requirements.</p>
+                    <div class="flex flex-col sm:flex-row gap-4 w-full max-w-sm">
+                        <button onclick="window.navigate('dashboard')" class="flex-1 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
+                            Dashboard <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
 
-          {activeView === 'library' && (
-            <div className="max-w-5xl mx-auto space-y-6">
-               <div className="bg-indigo-600 rounded-3xl p-6 md:p-10 text-white mb-6 shadow-xl shadow-indigo-100 relative overflow-hidden">
-                  <div className="relative z-10">
-                    <h2 className="text-2xl md:text-3xl font-black mb-2">Requirement Library</h2>
-                    <p className="opacity-80 text-xs md:text-sm max-w-md">Official state mandates and local ordinances. Sync them to your building to start tracking.</p>
-                  </div>
-                  <Sparkles size={120} className="absolute -right-10 -bottom-10 opacity-10 rotate-12"/>
-               </div>
-               
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                 {globalSuggestions.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase())).map(s => (
-                   <div key={s.id} className="bg-white border border-slate-100 rounded-2xl md:rounded-3xl p-5 md:p-6 hover:shadow-xl transition-all group flex flex-col justify-between">
-                     <div>
-                       <div className="flex justify-between items-start mb-4">
-                         <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg uppercase">{s.category}</span>
-                       </div>
-                       <h4 className="font-bold text-slate-800 mb-4 text-sm md:text-base">{s.name}</h4>
-                     </div>
-                     <button onClick={() => importTask(s)} className="w-full py-3 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase flex items-center justify-center gap-2 hover:bg-indigo-600 transition-all">
-                       <Download size={14}/> Add to Building
-                     </button>
-                   </div>
-                 ))}
-               </div>
-            </div>
-          )}
-        </div>
+        function Dashboard() {
+            return `
+                <div class="page-transition space-y-8">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-2xl font-bold">Compliance Overview</h2>
+                        <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Live</span>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                            <div class="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="file-text" class="w-5 h-5"></i></div>
+                            <p class="text-slate-500 text-sm font-medium">Active Docs</p>
+                            <h3 class="text-3xl font-bold">124</h3>
+                        </div>
+                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                            <div class="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="alert-circle" class="w-5 h-5"></i></div>
+                            <p class="text-slate-500 text-sm font-medium">Open Audits</p>
+                            <h3 class="text-3xl font-bold">3</h3>
+                        </div>
+                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+                            <div class="w-10 h-10 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="users" class="w-5 h-5"></i></div>
+                            <p class="text-slate-500 text-sm font-medium">Team</p>
+                            <h3 class="text-3xl font-bold">8</h3>
+                        </div>
+                    </div>
 
-        {/* Mobile Bottom Bar for quick navigation */}
-        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t flex items-center justify-around h-16 px-4 z-30">
-          <button onClick={() => setActiveView('checklist')} className={`flex flex-col items-center gap-1 transition-all ${activeView === 'checklist' ? 'text-indigo-600' : 'text-slate-400'}`}>
-            <LayoutDashboard size={20}/>
-            <span className="text-[9px] font-black uppercase">Home</span>
-          </button>
-          <button onClick={() => setActiveView('library')} className={`flex flex-col items-center gap-1 transition-all ${activeView === 'library' ? 'text-indigo-600' : 'text-slate-400'}`}>
-            <Library size={20}/>
-            <span className="text-[9px] font-black uppercase">Library</span>
-          </button>
-          <button onClick={() => { setIsMobileMenuOpen(true); }} className="flex flex-col items-center gap-1 text-slate-400">
-            <Menu size={20}/>
-            <span className="text-[9px] font-black uppercase">Menu</span>
-          </button>
-        </nav>
-      </main>
+                    <div class="bg-white p-10 rounded-[2.5rem] border-2 border-dashed border-slate-200 text-center">
+                        <div class="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i data-lucide="calendar" class="text-slate-300"></i>
+                        </div>
+                        <p class="text-slate-400 font-medium">No activity in the last 24 hours.</p>
+                    </div>
+                </div>
+            `;
+        }
 
-      {/* Mobile Menu Backdrop */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-30 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>
-      )}
-    </div>
-  );
-}
+        function Invite() {
+            return `
+                <div class="max-w-xl mx-auto page-transition space-y-6">
+                    <button onclick="window.navigate('dashboard')" class="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600">
+                        <i data-lucide="chevron-left" class="w-5 h-5"></i> Back
+                    </button>
+                    <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100">
+                        <h2 class="text-2xl font-bold mb-2">Team Invite</h2>
+                        <p class="text-slate-500 mb-6">Use AI to draft a professional message.</p>
+                        
+                        <div class="space-y-4">
+                            <input id="invite-email" type="email" placeholder="Email address" class="w-full bg-slate-50 border-0 rounded-2xl p-4 outline-none focus:ring-2 focus:ring-blue-600" value="${state.inviteEmail}">
+                            <button onclick="window.generateAIDraft()" ${state.isGenerating ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 disabled:opacity-50">
+                                ${state.isGenerating ? 'AI is Thinking...' : 'Generate AI Draft'}
+                            </button>
+                        </div>
+
+                        ${state.generatedInvite ? `
+                            <div class="mt-6 p-6 bg-blue-50 rounded-2xl border border-blue-100 animate-in zoom-in-95">
+                                <p class="text-blue-800 italic leading-relaxed">"${state.generatedInvite}"</p>
+                                <button onclick="window.showToast('Redirecting to mail...')" class="mt-4 w-full bg-white text-blue-600 border border-blue-200 font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                    <i data-lucide="send" class="w-4 h-4"></i> Copy & Send
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Render Engine ---
+        function render() {
+            const root = document.getElementById('app');
+            
+            if (state.view === 'landing') {
+                root.innerHTML = Landing();
+            } else {
+                root.innerHTML = `
+                    <div class="flex min-h-screen">
+                        <!-- Sidebar Desktop -->
+                        <aside class="hidden lg:flex flex-col w-72 bg-white border-r p-8 fixed h-full">
+                            <div class="flex items-center gap-3 text-blue-600 font-black text-2xl mb-12">
+                                <i data-lucide="shield" class="w-8 h-8"></i> NY PRO
+                            </div>
+                            <nav class="space-y-3 flex-1">
+                                <button onclick="window.navigate('dashboard')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'dashboard' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                    <i data-lucide="layout-grid" class="w-5 h-5"></i> Dashboard
+                                </button>
+                                <button onclick="window.navigate('invite')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'invite' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                    <i data-lucide="users" class="w-5 h-5"></i> Team
+                                </button>
+                                <button onclick="window.navigate('docs')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'docs' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                    <i data-lucide="file-text" class="w-5 h-5"></i> Documents
+                                </button>
+                            </nav>
+                        </aside>
+
+                        <!-- Main Content -->
+                        <main class="flex-1 lg:ml-72 p-6 md:p-12 pb-24">
+                            ${state.view === 'dashboard' ? Dashboard() : ''}
+                            ${state.view === 'invite' ? Invite() : ''}
+                            ${state.view === 'docs' ? '<div class="text-center py-20 text-slate-400">Document system loading...</div>' : ''}
+                        </main>
+
+                        <!-- Mobile Bottom Nav -->
+                        <nav class="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-around items-center z-50">
+                            <button onclick="window.navigate('dashboard')" class="${state.view === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="home"></i></button>
+                            <button onclick="window.navigate('invite')" class="${state.view === 'invite' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="users"></i></button>
+                            <button onclick="window.navigate('docs')" class="${state.view === 'docs' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="file-text"></i></button>
+                        </nav>
+                    </div>
+                `;
+            }
+
+            if (state.statusMsg) {
+                const toast = document.createElement('div');
+                toast.className = "fixed bottom-10 right-10 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl z-[100] animate-in slide-in-from-right";
+                toast.innerText = state.statusMsg;
+                document.body.appendChild(toast);
+            }
+
+            lucide.createIcons();
+        }
+
+        // --- Initialization ---
+        window.navigate = navigate;
+        window.generateAIDraft = generateAIDraft;
+        window.showToast = showToast;
+
+        signInAnonymously(auth).then(() => {
+            render();
+        });
+
+    </script>
+</body>
+</html>
