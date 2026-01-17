@@ -19,8 +19,8 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        .animate-in { animation: fadeIn 0.3s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body class="bg-slate-50">
@@ -39,16 +39,24 @@
         };
 
         function App() {
+            const [onboarded, setOnboarded] = useState(false);
+            const [onboardingStep, setOnboardingStep] = useState(1);
+            
+            // User & District Data
+            const [userData, setUserData] = useState({
+                districtName: '',
+                userName: '',
+                userTitle: ''
+            });
+
             const [activeView, setActiveView] = useState('checklist');
             const [expandedTaskId, setExpandedTaskId] = useState(null);
-            const [selectedBuilding, setSelectedBuilding] = useState('High School');
+            const [selectedBuilding, setSelectedBuilding] = useState('');
             const [searchTerm, setSearchTerm] = useState('');
             const [notification, setNotification] = useState(null);
 
             // District Configuration
-            const [buildings, setBuildings] = useState([
-                "High School", "Middle School", "Elementary North", "Elementary South", "District Office"
-            ]);
+            const [buildings, setBuildings] = useState([]);
 
             // Master Compliance Data
             const masterList = [
@@ -69,13 +77,15 @@
                 { category: "Health & Safety", subcategory: "Medical", name: "AED Inspection", frequency: "Monthly", authority: "NYSED", action: "Check Readiness", performedBy: "Nurse / Vendor", citation: "Ed. Law § 917" }
             ];
 
-            const [tasks, setTasks] = useState(() => {
+            const [tasks, setTasks] = useState([]);
+
+            const initializeTasksForBuildings = (buildingList) => {
                 const initial = [];
-                buildings.forEach(b => {
+                buildingList.forEach(b => {
                     masterList.forEach((m, idx) => {
                         initial.push({
                             ...m,
-                            id: `${b}-${idx}`,
+                            id: `${b}-${idx}-${Date.now()}`,
                             building: b,
                             attachments: [],
                             completed: false,
@@ -84,8 +94,18 @@
                         });
                     });
                 });
-                return initial;
-            });
+                setTasks(initial);
+            };
+
+            const handleOnboardingComplete = () => {
+                if (buildings.length === 0) {
+                    alert("Please add at least one building to your district.");
+                    return;
+                }
+                initializeTasksForBuildings(buildings);
+                setSelectedBuilding(buildings[0]);
+                setOnboarded(true);
+            };
 
             const showNotification = (msg) => {
                 setNotification(msg);
@@ -123,13 +143,132 @@
                 return acc;
             }, {});
 
+            if (!onboarded) {
+                return (
+                    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+                        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden animate-in">
+                            <div className="bg-indigo-600 p-8 text-white">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Icon name="shield-check" size={32} />
+                                    <h1 className="text-2xl font-black">NY Compliance</h1>
+                                </div>
+                                <p className="text-indigo-100 text-sm">Setup your district workspace</p>
+                            </div>
+
+                            <div className="p-8">
+                                {onboardingStep === 1 ? (
+                                    <div className="space-y-6">
+                                        <h2 className="text-xl font-bold text-slate-800">Your Information</h2>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Full Name</label>
+                                                <input 
+                                                    type="text" 
+                                                    className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    placeholder="John Doe"
+                                                    value={userData.userName}
+                                                    onChange={e => setUserData({...userData, userName: e.target.value})}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Title / Role</label>
+                                                <input 
+                                                    type="text" 
+                                                    className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    placeholder="Director of Facilities"
+                                                    value={userData.userTitle}
+                                                    onChange={e => setUserData({...userData, userTitle: e.target.value})}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">School District Name</label>
+                                                <input 
+                                                    type="text" 
+                                                    className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    placeholder="Central School District"
+                                                    value={userData.districtName}
+                                                    onChange={e => setUserData({...userData, districtName: e.target.value})}
+                                                />
+                                            </div>
+                                        </div>
+                                        <button 
+                                            disabled={!userData.districtName || !userData.userName}
+                                            onClick={() => setOnboardingStep(2)}
+                                            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all"
+                                        >
+                                            Next: Add Buildings
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-xl font-bold text-slate-800">Add Buildings</h2>
+                                            <button onClick={() => setOnboardingStep(1)} className="text-xs text-slate-400 hover:text-indigo-600 font-bold">Go Back</button>
+                                        </div>
+                                        <p className="text-sm text-slate-500">List all facilities in the {userData.districtName}. Each will receive the master compliance checklist.</p>
+                                        
+                                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                                            {buildings.map((b, idx) => (
+                                                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                                    <span className="text-sm font-bold text-slate-700">{b}</span>
+                                                    <button onClick={() => setBuildings(buildings.filter((_, i) => i !== idx))}><Icon name="trash-2" size={14} className="text-slate-300 hover:text-red-500" /></button>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                            <input 
+                                                id="new-building-input"
+                                                type="text" 
+                                                className="flex-1 p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                                                placeholder="e.g. High School"
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Enter' && e.target.value) {
+                                                        setBuildings([...buildings, e.target.value]);
+                                                        e.target.value = '';
+                                                    }
+                                                }}
+                                            />
+                                            <button 
+                                                onClick={() => {
+                                                    const input = document.getElementById('new-building-input');
+                                                    if (input.value) {
+                                                        setBuildings([...buildings, input.value]);
+                                                        input.value = '';
+                                                    }
+                                                }}
+                                                className="p-3 bg-indigo-100 text-indigo-600 rounded-xl hover:bg-indigo-200"
+                                            >
+                                                <Icon name="plus" />
+                                            </button>
+                                        </div>
+
+                                        <button 
+                                            onClick={handleOnboardingComplete}
+                                            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+                                        >
+                                            Complete Setup <Icon name="arrow-right" size={18} />
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="flex h-screen bg-slate-50">
                     {/* Sidebar */}
                     <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
-                        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-                            <Icon name="shield-check" size={28} className="text-indigo-400" />
-                            <h1 className="font-bold text-white text-lg">NY Compliance</h1>
+                        <div className="p-6 border-b border-slate-800">
+                            <div className="flex items-center gap-3 mb-1">
+                                <Icon name="shield-check" size={24} className="text-indigo-400" />
+                                <h1 className="font-bold text-white text-md truncate">{userData.districtName}</h1>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                                <Icon name="user" size={10} /> {userData.userName}
+                            </div>
                         </div>
                         
                         <div className="p-4 flex-1 overflow-y-auto">
@@ -278,7 +417,13 @@
                                             <div key={b} className="p-4 rounded-2xl border bg-slate-50 flex items-center justify-between group">
                                                 <span className="font-bold text-slate-700">{b}</span>
                                                 <button 
-                                                    onClick={() => setBuildings(buildings.filter(x => x !== b))}
+                                                    onClick={() => {
+                                                        const newTasks = tasks.filter(t => t.building !== b);
+                                                        setTasks(newTasks);
+                                                        const newBuildings = buildings.filter(x => x !== b);
+                                                        setBuildings(newBuildings);
+                                                        if(selectedBuilding === b) setSelectedBuilding(newBuildings[0] || '');
+                                                    }}
                                                     className="text-slate-300 hover:text-red-500 transition-all"
                                                 >
                                                     <Icon name="trash-2" size={16} />
@@ -288,7 +433,21 @@
                                         <button 
                                             onClick={() => {
                                                 const n = prompt("New Building Name:");
-                                                if(n) setBuildings([...buildings, n]);
+                                                if(n) {
+                                                    setBuildings([...buildings, n]);
+                                                    // Inherit existing tasks
+                                                    const newBuildingTasks = masterList.map((m, idx) => ({
+                                                        ...m,
+                                                        id: `${n}-${idx}-${Date.now()}`,
+                                                        building: n,
+                                                        attachments: [],
+                                                        completed: false,
+                                                        applicable: true,
+                                                        notes: ""
+                                                    }));
+                                                    setTasks([...tasks, ...newBuildingTasks]);
+                                                    showNotification(`${n} added to registry`);
+                                                }
                                             }}
                                             className="p-4 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center gap-2 text-slate-400 hover:border-indigo-400 hover:text-indigo-600 transition-all font-bold text-sm"
                                         >
