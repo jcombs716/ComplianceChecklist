@@ -1,235 +1,329 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NY Compliance Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; transition: all 0.3s ease; overflow-x: hidden; }
-        .nav-active { background-color: #2563eb; color: white; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3); }
-        .page-transition { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        /* Custom scrollbar for a premium look */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #f1f5f9; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-    </style>
-</head>
-<body class="bg-slate-50 text-slate-900">
+import React, { useState, useEffect } from 'react';
+import { 
+  LayoutDashboard, 
+  ShieldCheck, 
+  AlertTriangle, 
+  FileText, 
+  Settings, 
+  Bell,
+  Search,
+  Menu,
+  X,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  LogIn,
+  Key
+} from 'lucide-react';
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer 
+} from 'recharts';
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInWithCustomToken,
+  onAuthStateChanged,
+  signOut
+} from 'firebase/auth';
 
-    <div id="app">
-        <!-- Initial Loading State -->
-        <div class="min-h-screen flex items-center justify-center">
-            <div class="animate-pulse text-blue-600 font-bold text-xl">Initializing...</div>
+// --- CONFIGURATION ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
+  authDomain: "compliance-checklist-d9c98.firebaseapp.com",
+  projectId: "compliance-checklist-d9c98",
+  storageBucket: "compliance-checklist-d9c98.firebasestorage.app",
+  messagingSenderId: "303424189265",
+  appId: "1:303424189265:web:53767634f420f882fb1970",
+  measurementId: "G-QKV1EDXYP4"
+};
+
+const mockComplianceData = [
+  { month: 'Jan', score: 85 },
+  { month: 'Feb', score: 82 },
+  { month: 'Mar', score: 88 },
+  { month: 'Apr', score: 91 },
+  { month: 'May', score: 89 },
+  { month: 'Jun', score: 94 },
+];
+
+const App = () => {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
+  const [authError, setAuthError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let auth;
+    try {
+      const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+      auth = getAuth(app);
+
+      const initAuth = async () => {
+        try {
+          // Rule 3: Auth Before Queries + Handle Custom Token specifically
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            try {
+              await signInWithCustomToken(auth, __initial_auth_token);
+              setAuthError(null);
+            } catch (tokenErr) {
+              // Handle auth/custom-token-mismatch or expired tokens
+              console.warn("Custom token failed (likely mismatch or expired). Proceeding to manual login state.");
+              // We don't throw here so the app still loads in 'Logged Out' state rather than crashing
+            }
+          }
+        } catch (err) {
+          console.error("Auth initialization error:", err);
+          setAuthError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      initAuth();
+      
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        setLoading(false);
+      });
+
+      return () => unsubscribe();
+    } catch (error) {
+      console.error("Firebase initialization failed:", error);
+    }
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      const auth = getAuth();
+      await signOut(auth);
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
+
+  const NavItem = ({ id, icon: Icon, label }) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
+        activeTab === id 
+          ? 'bg-blue-600 text-white' 
+          : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+      }`}
+    >
+      <Icon size={20} />
+      {isSidebarOpen && <span className="font-medium">{label}</span>}
+    </button>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex font-sans">
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-gray-900 border-r border-gray-800 transition-all duration-300 flex flex-col shadow-xl`}>
+        <div className="p-6 flex items-center justify-between">
+          {isSidebarOpen && (
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center shadow-lg shadow-blue-900/20">
+                <ShieldCheck className="text-white" size={20} />
+              </div>
+              <h1 className="text-lg font-bold tracking-tight">NY Compliance</h1>
+            </div>
+          )}
+          <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400">
+            {isSidebarOpen ? <X size={20}/> : <Menu size={20}/>}
+          </button>
         </div>
-    </div>
 
-    <script>
-        // --- State Management ---
-        let state = {
-            view: 'landing', 
-            isGenerating: false,
-            inviteEmail: '',
-            generatedInvite: '',
-            statusMsg: ''
-        };
+        <nav className="flex-1 px-3 space-y-1">
+          <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
+          <NavItem id="audits" icon={ShieldCheck} label="Audits" />
+          <NavItem id="risks" icon={AlertTriangle} label="Risk Assessment" />
+          <NavItem id="reports" icon={FileText} label="Reports" />
+        </nav>
 
-        // --- Core Functions ---
-        function navigate(viewName) {
-            state.view = viewName;
-            render();
-            window.scrollTo(0, 0);
-        }
+        <div className="p-4 border-t border-gray-800">
+          <NavItem id="settings" icon={Settings} label="Settings" />
+        </div>
+      </aside>
 
-        async function generateAIDraft() {
-            const email = document.getElementById('invite-email')?.value;
-            if (!email) return;
+      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        <header className="h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-8 z-10">
+          <div className="relative w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+            <input 
+              type="text" 
+              placeholder="Search compliance records..." 
+              className="w-full bg-gray-800 border-none rounded-full py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+            />
+          </div>
+          <div className="flex items-center space-x-4">
+            <button className="p-2 text-gray-400 hover:text-white relative transition-colors">
+              <Bell size={20} />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+            <div className="flex items-center space-x-3 bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700">
+              <div className="h-6 w-6 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600"></div>
+              <span className="text-xs font-semibold text-gray-300">
+                {user ? (user.email || user.phoneNumber || 'Authenticated User') : 'Guest Mode'}
+              </span>
+              {user && (
+                <button onClick={handleLogout} className="text-[10px] text-gray-500 hover:text-red-400 font-bold uppercase ml-2">
+                  Exit
+                </button>
+              )}
+            </div>
+          </div>
+        </header>
 
-            state.isGenerating = true;
-            render();
+        <div className="p-8 overflow-y-auto flex-1 bg-gray-950">
+          {authError && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center space-x-3 text-red-500 text-sm">
+              <AlertTriangle size={18} />
+              <span>System Error: {authError}</span>
+            </div>
+          )}
 
-            // Note: In a real Vercel production app, you would call your own API route 
-            // to keep your API key hidden. For now, we simulate a professional response.
-            setTimeout(() => {
-                state.generatedInvite = `Hi there,\n\nI'd like to invite you to join our NY Compliance Pro team. This platform will help us streamline our regulatory tracking and document management for New York state requirements.\n\nPlease let me know when you've had a chance to set up your account.\n\nBest regards.`;
-                state.isGenerating = false;
-                render();
-            }, 1500);
-        }
-
-        function showToast(msg) {
-            state.statusMsg = msg;
-            render();
-            setTimeout(() => { state.statusMsg = ''; render(); }, 3000);
-        }
-
-        // --- View Templates ---
-        function Landing() {
-            return `
-                <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center page-transition">
-                    <div class="bg-blue-600 p-5 rounded-3xl mb-8 shadow-2xl">
-                        <i data-lucide="shield" class="text-white w-12 h-12"></i>
-                    </div>
-                    <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4 tracking-tight">NY Compliance Pro</h1>
-                    <p class="text-lg text-slate-600 mb-10 max-w-md">The professional standard for tracking New York state regulatory requirements.</p>
-                    <div class="flex flex-col sm:flex-row gap-4 w-full max-w-sm">
-                        <button onclick="navigate('dashboard')" class="flex-1 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 hover:-translate-y-1 transition-all flex items-center justify-center gap-2">
-                            Enter Dashboard <i data-lucide="arrow-right" class="w-5 h-5"></i>
-                        </button>
-                    </div>
+          {!user && !loading && (
+            <div className="mb-8 p-6 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+              <div className="flex items-start space-x-4">
+                <div className="p-2 bg-blue-500/20 rounded-lg text-blue-500">
+                  <LogIn size={24} />
                 </div>
-            `;
-        }
-
-        function Dashboard() {
-            return `
-                <div class="page-transition space-y-8">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <h2 class="text-2xl font-bold">Compliance Overview</h2>
-                            <p class="text-slate-500 text-sm">Welcome back, Admin</p>
-                        </div>
-                        <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Systems Nominal</span>
-                    </div>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                            <div class="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="file-text" class="w-5 h-5"></i></div>
-                            <p class="text-slate-500 text-sm font-medium">Active Docs</p>
-                            <h3 class="text-3xl font-bold">124</h3>
-                        </div>
-                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                            <div class="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="alert-circle" class="w-5 h-5"></i></div>
-                            <p class="text-slate-500 text-sm font-medium">Open Audits</p>
-                            <h3 class="text-3xl font-bold">3</h3>
-                        </div>
-                        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                            <div class="w-10 h-10 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center mb-4"><i data-lucide="users" class="w-5 h-5"></i></div>
-                            <p class="text-slate-500 text-sm font-medium">Team</p>
-                            <h3 class="text-3xl font-bold">8</h3>
-                        </div>
-                    </div>
-
-                    <div class="bg-white p-10 rounded-[2.5rem] border-2 border-dashed border-slate-200 text-center">
-                        <div class="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <i data-lucide="calendar" class="text-slate-300"></i>
-                        </div>
-                        <p class="text-slate-400 font-medium">No urgent compliance tasks today.</p>
-                        <button class="mt-4 text-blue-600 font-bold text-sm hover:underline">View Calendar</button>
-                    </div>
-                </div>
-            `;
-        }
-
-        function Invite() {
-            return `
-                <div class="max-w-xl mx-auto page-transition space-y-6">
-                    <button onclick="navigate('dashboard')" class="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600 group">
-                        <i data-lucide="chevron-left" class="w-5 h-5 group-hover:-translate-x-1 transition-transform"></i> Back to Dashboard
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-blue-400 mb-1">Access Required</h3>
+                  <p className="text-gray-300 text-sm mb-4">
+                    The NY Compliance portal requires authentication via your managed <strong>Email</strong> or <strong>Phone</strong> provider.
+                  </p>
+                  <div className="flex space-x-3">
+                    <button className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-lg shadow-blue-900/20 active:scale-95">
+                      <Key size={14} /> <span>Portal Login</span>
                     </button>
-                    <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100">
-                        <h2 class="text-2xl font-bold mb-2">Team Invite</h2>
-                        <p class="text-slate-500 mb-6">Send an invitation to join the compliance portal.</p>
-                        
-                        <div class="space-y-4">
-                            <div class="relative">
-                                <i data-lucide="mail" class="absolute left-4 top-4 text-slate-400 w-5 h-5"></i>
-                                <input id="invite-email" type="email" placeholder="Email address" class="w-full bg-slate-50 border-0 rounded-2xl p-4 pl-12 outline-none focus:ring-2 focus:ring-blue-600 transition-all" value="${state.inviteEmail}">
-                            </div>
-                            <button onclick="generateAIDraft()" ${state.isGenerating ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
-                                ${state.isGenerating ? '<div class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Thinking...' : '<i data-lucide="sparkles" class="w-5 h-5"></i> Generate AI Draft'}
-                            </button>
-                        </div>
-
-                        ${state.generatedInvite ? `
-                            <div class="mt-6 p-6 bg-blue-50 rounded-2xl border border-blue-100 animate-in zoom-in-95">
-                                <p class="text-blue-800 italic leading-relaxed whitespace-pre-wrap">"${state.generatedInvite}"</p>
-                                <button onclick="showToast('Invitation copied to clipboard!')" class="mt-4 w-full bg-white text-blue-600 border border-blue-200 font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors">
-                                    <i data-lucide="copy" class="w-4 h-4"></i> Copy Text
-                                </button>
-                            </div>
-                        ` : ''}
-                    </div>
+                  </div>
                 </div>
-            `;
-        }
+              </div>
+            </div>
+          )}
 
-        // --- Render Engine ---
-        function render() {
-            const root = document.getElementById('app');
-            
-            if (state.view === 'landing') {
-                root.innerHTML = Landing();
-            } else {
-                root.innerHTML = `
-                    <div class="flex min-h-screen">
-                        <!-- Sidebar Desktop -->
-                        <aside class="hidden lg:flex flex-col w-72 bg-white border-r p-8 fixed h-full z-10">
-                            <div class="flex items-center gap-3 text-blue-600 font-black text-2xl mb-12">
-                                <i data-lucide="shield" class="w-8 h-8"></i> NY PRO
-                            </div>
-                            <nav class="space-y-3 flex-1">
-                                <button onclick="navigate('dashboard')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'dashboard' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
-                                    <i data-lucide="layout-grid" class="w-5 h-5"></i> Dashboard
-                                </button>
-                                <button onclick="navigate('invite')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'invite' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
-                                    <i data-lucide="users" class="w-5 h-5"></i> Team
-                                </button>
-                                <button onclick="navigate('docs')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'docs' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
-                                    <i data-lucide="file-text" class="w-5 h-5"></i> Documents
-                                </button>
-                            </nav>
-                            <div class="pt-8 border-t border-slate-100">
-                                <button onclick="navigate('landing')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold text-slate-400 hover:text-red-500 transition-colors">
-                                    <i data-lucide="log-out" class="w-5 h-5"></i> Sign Out
-                                </button>
-                            </div>
-                        </aside>
+          <div className="flex justify-between items-end mb-8">
+            <div>
+              <h2 className="text-3xl font-bold text-white tracking-tight">Compliance Overview</h2>
+              <div className="flex items-center mt-1 space-x-2">
+                <span className={`w-2 h-2 rounded-full ${user ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]'}`}></span>
+                <p className="text-gray-400 text-sm font-medium">
+                  {user ? 'District Portal Connected' : 'Limited Preview Mode • Authentication Required'}
+                </p>
+              </div>
+            </div>
+            <div className="flex space-x-3">
+              <button className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-all border border-gray-700">
+                Export Data
+              </button>
+              <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20 active:scale-95">
+                New Audit
+              </button>
+            </div>
+          </div>
 
-                        <!-- Main Content -->
-                        <main class="flex-1 lg:ml-72 p-6 md:p-12 pb-24">
-                            ${state.view === 'dashboard' ? Dashboard() : ''}
-                            ${state.view === 'invite' ? Invite() : ''}
-                            ${state.view === 'docs' ? '<div class="text-center py-20 text-slate-400 flex flex-col items-center gap-4"><i data-lucide="folder-open" class="w-12 h-12"></i> Document system is being initialized...</div>' : ''}
-                        </main>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[
+              { label: 'Overall Score', value: '94.2%', icon: ShieldCheck, color: 'text-green-500', bg: 'bg-green-500/10' },
+              { label: 'Active Alerts', value: '3', icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+              { label: 'Pending Reviews', value: '12', icon: Clock, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+              { label: 'Completed', value: '158', icon: CheckCircle2, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+            ].map((stat, i) => (
+              <div key={i} className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-gray-700 transition-colors shadow-sm group">
+                <div className={`w-12 h-12 rounded-xl ${stat.bg} ${stat.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                  <stat.icon size={26} />
+                </div>
+                <div className="text-3xl font-black mb-1">{stat.value}</div>
+                <div className="text-gray-500 text-sm font-semibold uppercase tracking-wider">{stat.label}</div>
+              </div>
+            ))}
+          </div>
 
-                        <!-- Mobile Bottom Nav -->
-                        <nav class="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-around items-center z-50">
-                            <button onclick="navigate('dashboard')" class="p-2 ${state.view === 'dashboard' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="home"></i></button>
-                            <button onclick="navigate('invite')" class="p-2 ${state.view === 'invite' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="users"></i></button>
-                            <button onclick="navigate('docs')" class="p-2 ${state.view === 'docs' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="file-text"></i></button>
-                        </nav>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-xl font-bold">Compliance Trend</h3>
+                <div className="text-xs font-bold text-gray-500 bg-gray-800 px-3 py-1 rounded-full uppercase tracking-widest">
+                  NY Ed Law 2-d Statistics
+                </div>
+              </div>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={mockComplianceData}>
+                    <defs>
+                      <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis 
+                      dataKey="month" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fill: '#6b7280', fontSize: 12}}
+                      dy={10}
+                    />
+                    <YAxis 
+                      hide={true} 
+                      domain={[0, 100]}
+                    />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '12px', padding: '12px' }}
+                      itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
+                      cursor={{ stroke: '#3b82f6', strokeWidth: 1 }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="score" 
+                      stroke="#3b82f6" 
+                      strokeWidth={3}
+                      fillOpacity={1} 
+                      fill="url(#colorScore)" 
+                      animationDuration={1500}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-sm">
+              <h3 className="text-xl font-bold mb-6">Critical Feedback</h3>
+              <div className="space-y-6">
+                {[
+                  { title: 'Privacy Audit', time: '2h ago', status: 'Passed', color: 'text-green-500' },
+                  { title: 'Vendor Review', time: '5h ago', status: 'Pending', color: 'text-amber-500' },
+                  { title: 'Data Breach Simulation', time: '1d ago', status: 'Failed', color: 'text-red-500' },
+                  { title: 'Inventory Sync', time: '2d ago', status: 'Success', color: 'text-green-500' },
+                ].map((activity, i) => (
+                  <div key={i} className="flex items-start justify-between group cursor-pointer p-2 -m-2 rounded-lg hover:bg-gray-800/50 transition-colors">
+                    <div>
+                      <div className="font-bold text-sm group-hover:text-blue-400 transition-colors">{activity.title}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{activity.time}</div>
                     </div>
-                `;
-            }
+                    <div className={`text-[10px] font-black uppercase tracking-tighter px-2 py-1 rounded bg-gray-800 ${activity.color}`}>
+                      {activity.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button className="w-full mt-8 py-3 border border-gray-800 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-800 hover:text-white transition-all">
+                VIEW HISTORY
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
 
-            // Toast system
-            if (state.statusMsg) {
-                const toast = document.createElement('div');
-                toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-10 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl z-[100] animate-in slide-in-from-bottom-5";
-                toast.innerHTML = `<div class="flex items-center gap-3 font-medium"><i data-lucide="check-circle" class="text-green-400 w-5 h-5"></i> ${state.statusMsg}</div>`;
-                document.body.appendChild(toast);
-                lucide.createIcons();
-            }
-
-            // Always run lucide after a render
-            lucide.createIcons();
-        }
-
-        // --- Initialization ---
-        // Globalize functions so they work with onclick attributes
-        window.navigate = navigate;
-        window.generateAIDraft = generateAIDraft;
-        window.showToast = showToast;
-
-        // Start the app
-        document.addEventListener('DOMContentLoaded', () => {
-            render();
-        });
-    </script>
-</body>
-</html>
+export default App;
