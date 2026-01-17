@@ -23,15 +23,17 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   LayoutDashboard, 
-  Users, 
   ShieldAlert, 
   Lock, 
   BarChart3, 
   Database, 
-  RefreshCw, 
-  Plus, 
   X,
-  FileText
+  FileText,
+  TrendingUp,
+  Map,
+  Activity,
+  ChevronRight,
+  Download
 } from 'lucide-react';
 
 // --- PRODUCTION CONFIGURATION ---
@@ -70,11 +72,9 @@ export default function App() {
           setLoading(false);
           return;
         }
-
         const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
         const _auth = getAuth(app);
         const _db = getFirestore(app);
-        
         setAuth(_auth);
         setDb(_db);
 
@@ -88,10 +88,8 @@ export default function App() {
           setUser(u);
           setLoading(false);
         });
-
         return () => unsubAuth();
       } catch (err) {
-        console.error("Initialization Error:", err);
         setConfigError(true);
         setLoading(false);
       }
@@ -107,10 +105,9 @@ export default function App() {
     const unsubMaster = onSnapshot(
       collection(db, 'artifacts', appId, 'public', 'data', 'master_tasks'),
       (snap) => {
-        const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setMasterTasks(tasks);
+        setMasterTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       },
-      (err) => console.warn("Master tasks not yet seeded:", err)
+      (err) => console.warn("Master tasks missing:", err)
     );
 
     const unsubDistrict = onSnapshot(
@@ -144,7 +141,7 @@ export default function App() {
     };
   }, [db, user]);
 
-  // --- 3. SEED UTILITY (Ensures Live Code has Data) ---
+  // --- 3. ACTIONS ---
   const seedMasterTasks = async () => {
     if (!db || !user) return;
     setSeeding(true);
@@ -152,11 +149,11 @@ export default function App() {
     const batch = writeBatch(db);
     
     const mandates = [
-      { id: 'fire_01', name: 'Annual Fire Safety Inspection', frequency: 'Annual', authority: 'NYSED Office of Facilities' },
-      { id: 'lead_01', name: 'Lead-in-Water Testing (Triennial)', frequency: '3-Year', authority: 'NY Dept of Health' },
-      { id: 'bcs_01', name: 'Building Condition Survey (BCS)', frequency: '5-Year', authority: 'NYSED' },
-      { id: 'save_01', name: 'District-Wide Safety Plan Update', frequency: 'Annual', authority: 'SAVE Act' },
-      { id: 'asb_01', name: 'AHERA 6-Month Periodic Surveillance', frequency: '6-Month', authority: 'EPA/NYSED' }
+      { id: 'fire_01', name: 'Annual Fire Safety Inspection', frequency: 'Annual', authority: 'NYSED', category: 'Safety' },
+      { id: 'lead_01', name: 'Lead-in-Water Testing', frequency: '3-Year', authority: 'NYDOH', category: 'Health' },
+      { id: 'bcs_01', name: 'Building Condition Survey', frequency: '5-Year', authority: 'NYSED', category: 'Facilities' },
+      { id: 'save_01', name: 'District Safety Plan', frequency: 'Annual', authority: 'SAVE Act', category: 'Security' },
+      { id: 'asb_01', name: 'AHERA Surveillance', frequency: '6-Month', authority: 'EPA', category: 'Health' }
     ];
 
     mandates.forEach(m => {
@@ -168,7 +165,6 @@ export default function App() {
     setSeeding(false);
   };
 
-  // --- 4. ACTIONS ---
   const handleToggle = async (mandateId) => {
     if (!db || !user || !activeBuildingId) return;
     const appId = getAppId();
@@ -199,9 +195,24 @@ export default function App() {
     setView('dashboard');
   };
 
-  // --- STATS ---
+  // --- COMPUTED DATA ---
   const currentBuilding = useMemo(() => buildings.find(b => b.id === activeBuildingId), [buildings, activeBuildingId]);
-  const stats = useMemo(() => {
+  
+  const districtStats = useMemo(() => {
+    if (buildings.length === 0 || masterTasks.length === 0) return { avg: 0, critical: 0 };
+    const buildingMetrics = buildings.map(b => {
+      const done = Object.values(complianceLogs).filter(l => l.buildingId === b.id && l.status === 'Complete').length;
+      return (done / masterTasks.length) * 100;
+    });
+    const avg = Math.round(buildingMetrics.reduce((a, b) => a + b, 0) / buildings.length);
+    const criticalCount = buildings.filter(b => {
+      const done = Object.values(complianceLogs).filter(l => l.buildingId === b.id && l.status === 'Complete').length;
+      return done < masterTasks.length;
+    }).length;
+    return { avg, critical: criticalCount };
+  }, [buildings, masterTasks, complianceLogs]);
+
+  const buildingStats = useMemo(() => {
     if (!activeBuildingId || masterTasks.length === 0) return { percent: 0, pending: 0 };
     const completed = Object.values(complianceLogs).filter(l => l.buildingId === activeBuildingId && l.status === 'Complete').length;
     return {
@@ -212,24 +223,27 @@ export default function App() {
 
   // --- VIEWS ---
   if (loading) return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center flex-col gap-4">
-      <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
-      <span className="text-slate-500 font-bold">Initializing Secure Environment...</span>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center flex-col gap-6">
+      <Activity className="text-indigo-500 animate-pulse" size={48} />
+      <div className="text-center">
+        <h3 className="text-white font-black text-xl mb-1 uppercase tracking-tighter">NY Compliance Cloud</h3>
+        <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">Establishing Handshake</p>
+      </div>
     </div>
   );
 
   if (configError) return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-white font-sans">
-      <div className="max-w-md w-full bg-slate-900 rounded-[2rem] p-8 border border-white/10 shadow-2xl">
+    <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 text-white">
+      <div className="max-w-md w-full bg-slate-900 rounded-[2.5rem] p-10 border border-white/10 shadow-2xl">
         <Database className="text-red-500 mb-6" size={40} />
-        <h2 className="text-2xl font-black mb-4">Live Deployment Setup</h2>
-        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-          Firebase credentials not found. To go live, paste your SDK config JSON below.
+        <h2 className="text-3xl font-black mb-4 tracking-tighter leading-none">Initialization Required</h2>
+        <p className="text-slate-400 text-sm mb-8 leading-relaxed">
+          The application environment needs a Firebase project to store compliance data.
         </p>
         <textarea 
           id="manual_cfg"
-          placeholder='{ "apiKey": "...", "projectId": "...", ... }'
-          className="w-full h-32 bg-slate-800 rounded-xl p-4 text-xs font-mono mb-4 border border-white/5 focus:border-indigo-500 outline-none transition-all"
+          placeholder='Paste Firebase Config JSON here...'
+          className="w-full h-32 bg-slate-950 rounded-2xl p-4 text-xs font-mono mb-6 border border-white/5 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-700"
         />
         <button 
           onClick={() => {
@@ -237,93 +251,100 @@ export default function App() {
             try { JSON.parse(val); localStorage.setItem('fb_config_prod', val); window.location.reload(); }
             catch(e) { alert("Invalid JSON format"); }
           }}
-          className="w-full py-4 bg-indigo-600 rounded-xl font-black hover:bg-indigo-500 transition-colors"
+          className="w-full py-5 bg-white text-black rounded-2xl font-black hover:bg-slate-200 transition-all active:scale-95"
         >
-          Initialize Production
+          Initialize Cloud
         </button>
       </div>
     </div>
   );
 
   if (view === 'landing') return (
-    <div className="min-h-screen bg-[#020617] text-white font-sans relative overflow-hidden flex flex-col">
-      <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,#1e1b4b,transparent)] opacity-60" />
-      <nav className="relative z-10 flex items-center justify-between px-10 py-8">
+    <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col overflow-hidden">
+      <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-indigo-600/20 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2" />
+      <nav className="relative z-10 p-10 flex justify-between items-center">
         <div className="flex items-center gap-3">
           <ShieldCheck className="text-indigo-500" size={32} />
           <span className="font-black text-xl tracking-tighter uppercase">NY Compliance Pro</span>
         </div>
-        <button onClick={() => setView('onboarding')} className="px-6 py-2.5 bg-white/5 border border-white/10 rounded-full text-sm font-bold hover:bg-white/10 transition-all">
-          District Portal
+        <button onClick={() => setView('onboarding')} className="px-8 py-3 bg-white/5 border border-white/10 rounded-full text-xs font-black uppercase tracking-widest hover:bg-white/10 transition-all">
+          District Access
         </button>
       </nav>
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-6">
-        <h1 className="text-7xl md:text-8xl font-black tracking-tight leading-[0.9] mb-10 max-w-4xl">
-          SED Compliance <br /><span className="text-indigo-500">Simplified.</span>
+        <div className="bg-indigo-500/10 text-indigo-400 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest mb-8 border border-indigo-500/20">
+          2024-2025 Mandate Cycle
+        </div>
+        <h1 className="text-6xl md:text-9xl font-black tracking-tight leading-[0.85] mb-12 max-w-5xl uppercase">
+          Eliminate <span className="text-indigo-500">Compliance</span> <br /> Blindspots.
         </h1>
-        <p className="text-slate-400 text-xl font-medium max-w-xl mb-12">
-          Unified oversight for New York State school district mandates.
+        <p className="text-slate-400 text-lg font-medium max-w-xl mb-12">
+          Real-time oversight for NYSED facilities mandates across your entire school district.
         </p>
         <button 
           onClick={() => setView('onboarding')} 
-          className="group px-10 py-6 bg-indigo-600 hover:bg-indigo-500 rounded-full font-black text-xl flex items-center gap-4 transition-all hover:scale-105 active:scale-95 shadow-2xl shadow-indigo-600/30"
+          className="group px-12 py-7 bg-white text-black hover:bg-slate-200 rounded-full font-black text-xl flex items-center gap-4 transition-all hover:scale-105 active:scale-95 shadow-2xl shadow-indigo-500/10"
         >
-          Get Started <ArrowRight className="group-hover:translate-x-1 transition-transform" />
+          Begin District Mapping <ArrowRight className="group-hover:translate-x-1 transition-transform" />
         </button>
       </main>
     </div>
   );
 
   if (view === 'onboarding') return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 font-sans">
-      <div className="w-full max-w-xl bg-white rounded-[2.5rem] p-10 shadow-2xl border border-slate-200/60">
-        <div className="flex items-center gap-2 mb-8">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-xl bg-white rounded-[3rem] p-12 shadow-[0_32px_64px_-12px_rgba(0,0,0,0.1)] border border-slate-100">
+        <div className="flex items-center gap-2 mb-12">
           {[1, 2].map(s => (
-            <div key={s} className={`h-1.5 flex-1 rounded-full transition-colors ${onboardingStep >= s ? 'bg-indigo-600' : 'bg-slate-100'}`} />
+            <div key={s} className={`h-2 flex-1 rounded-full transition-all duration-500 ${onboardingStep >= s ? 'bg-indigo-600' : 'bg-slate-100'}`} />
           ))}
         </div>
         
         {onboardingStep === 1 ? (
-          <div>
-            <h2 className="text-3xl font-black text-slate-900 mb-2">District ID</h2>
-            <p className="text-slate-500 mb-8 font-medium">Identify your district to begin mandate mapping.</p>
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h2 className="text-4xl font-black text-slate-900 mb-3 tracking-tighter">District Identity</h2>
+            <p className="text-slate-500 mb-10 font-medium">Verify your district information to create the compliance ledger.</p>
             <div className="space-y-4">
+              <div className="relative">
+                <input 
+                  placeholder="Official District Name" 
+                  className="w-full p-6 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 focus:bg-white outline-none font-bold text-slate-900 transition-all"
+                  value={districtData.name}
+                  onChange={e => setDistrictData({...districtData, name: e.target.value})}
+                />
+              </div>
               <input 
-                placeholder="District Name" 
-                className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold"
-                value={districtData.name}
-                onChange={e => setDistrictData({...districtData, name: e.target.value})}
-              />
-              <input 
-                placeholder="BEDS Code" 
-                className="w-full p-5 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold"
+                placeholder="District BEDS Code" 
+                className="w-full p-6 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 focus:bg-white outline-none font-bold text-slate-900 transition-all"
                 value={districtData.bedsCode}
                 onChange={e => setDistrictData({...districtData, bedsCode: e.target.value})}
               />
               <button 
                 disabled={!districtData.name || !districtData.bedsCode}
                 onClick={() => setOnboardingStep(2)} 
-                className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black mt-4 disabled:opacity-50"
+                className="w-full py-6 bg-slate-950 text-white rounded-2xl font-black mt-6 disabled:opacity-30 hover:bg-indigo-600 transition-all"
               >
-                Next
+                Continue to Facilities
               </button>
             </div>
           </div>
         ) : (
-          <div>
-            <h2 className="text-3xl font-black text-slate-900 mb-2">Facility List</h2>
-            <p className="text-slate-500 mb-8 font-medium">Add buildings that require compliance monitoring.</p>
-            <div className="space-y-3 mb-8">
+          <div className="animate-in fade-in slide-in-from-right-4 duration-500">
+            <h2 className="text-4xl font-black text-slate-900 mb-3 tracking-tighter">Map Facilities</h2>
+            <p className="text-slate-500 mb-10 font-medium">Add all buildings requiring SED monitoring.</p>
+            <div className="space-y-3 mb-8 max-h-[300px] overflow-y-auto pr-2">
               {buildings.map(b => (
-                <div key={b.id} className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex justify-between items-center">
+                <div key={b.id} className="p-5 bg-slate-50 border border-slate-100 rounded-2xl flex justify-between items-center group hover:border-indigo-200 transition-all">
                   <span className="font-bold text-slate-800">{b.name}</span>
-                  <button onClick={() => setBuildings(buildings.filter(x => x.id !== b.id))} className="text-slate-300 hover:text-red-500"><X size={18} /></button>
+                  <button onClick={() => setBuildings(buildings.filter(x => x.id !== b.id))} className="text-slate-300 hover:text-red-500 p-2 transition-colors">
+                    <X size={18} />
+                  </button>
                 </div>
               ))}
               <div className="relative">
                 <input 
-                  placeholder="Building Name (Press Enter)" 
-                  className="w-full p-4 rounded-xl border-2 border-dashed border-slate-200 focus:border-indigo-500 outline-none font-bold"
+                  placeholder="Type Building Name + Enter" 
+                  className="w-full p-5 rounded-2xl border-2 border-dashed border-slate-200 focus:border-indigo-500 focus:border-solid outline-none font-bold text-slate-900 transition-all"
                   onKeyDown={e => {
                     if (e.key === 'Enter' && e.target.value) {
                       setBuildings([...buildings, { id: 'b_'+Date.now(), name: e.target.value }]);
@@ -333,14 +354,14 @@ export default function App() {
                 />
               </div>
             </div>
-            <div className="flex gap-4">
-              <button onClick={() => setOnboardingStep(1)} className="px-8 py-5 bg-slate-100 rounded-2xl font-black text-slate-600">Back</button>
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={() => setOnboardingStep(1)} className="py-6 bg-slate-100 rounded-2xl font-black text-slate-600 hover:bg-slate-200 transition-all">Back</button>
               <button 
                 disabled={buildings.length === 0}
                 onClick={saveOnboarding} 
-                className="flex-1 py-5 bg-indigo-600 text-white rounded-2xl font-black disabled:opacity-50"
+                className="py-6 bg-indigo-600 text-white rounded-2xl font-black disabled:opacity-30 hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20"
               >
-                Launch
+                Launch Portal
               </button>
             </div>
           </div>
@@ -351,112 +372,189 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans overflow-hidden">
-      <aside className="w-80 bg-slate-950 text-slate-400 p-8 flex flex-col shrink-0">
+      {/* Sidebar */}
+      <aside className="w-80 bg-[#020617] text-slate-400 p-8 flex flex-col shrink-0">
         <div className="flex items-center gap-3 mb-12">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-sm">NY</div>
-          <div>
-            <h2 className="text-white font-black text-xs uppercase tracking-wider truncate max-w-[160px]">{districtData.name}</h2>
-            <p className="text-[10px] font-bold text-slate-600">District Oversight</p>
+          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-lg">NY</div>
+          <div className="min-w-0">
+            <h2 className="text-white font-black text-sm uppercase tracking-tighter truncate">{districtData.name}</h2>
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Master Oversight</p>
           </div>
         </div>
 
-        <nav className="flex-1 space-y-10">
+        <nav className="flex-1 space-y-10 overflow-y-auto no-scrollbar">
           <div>
-            <p className="text-[10px] font-black uppercase text-slate-600 tracking-widest mb-5">Navigation</p>
-            <button className="w-full p-4 bg-white/10 text-white rounded-2xl font-black text-xs text-left flex items-center gap-3">
-              <LayoutDashboard size={18}/> Dashboard
-            </button>
+            <p className="text-[10px] font-black uppercase text-slate-700 tracking-[0.2em] mb-6">Operations</p>
+            <div className="space-y-1">
+              <button className="w-full p-4 bg-white/5 text-white rounded-2xl font-black text-xs text-left flex items-center gap-3 border border-white/5">
+                <LayoutDashboard size={18} className="text-indigo-400"/> Dashboard
+              </button>
+              <button className="w-full p-4 text-slate-500 rounded-2xl font-black text-xs text-left flex items-center gap-3 hover:bg-white/5 hover:text-white transition-all">
+                <TrendingUp size={18}/> Analytics
+              </button>
+            </div>
           </div>
 
           <div>
-            <p className="text-[10px] font-black uppercase text-slate-600 tracking-widest mb-5">Buildings</p>
+            <div className="flex items-center justify-between mb-6 pr-2">
+              <p className="text-[10px] font-black uppercase text-slate-700 tracking-[0.2em]">Buildings</p>
+              <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-full text-slate-400 font-bold">{buildings.length}</span>
+            </div>
             <div className="space-y-1">
-              {buildings.map(b => (
-                <button 
-                  key={b.id} 
-                  onClick={() => setActiveBuildingId(b.id)} 
-                  className={`w-full p-4 rounded-xl text-left text-[11px] font-bold flex items-center justify-between ${activeBuildingId === b.id ? 'bg-indigo-600 text-white' : 'hover:bg-white/5'}`}
-                >
-                  <span className="truncate">{b.name}</span>
-                </button>
-              ))}
+              {buildings.map(b => {
+                 const done = Object.values(complianceLogs).filter(l => l.buildingId === b.id && l.status === 'Complete').length;
+                 const perc = masterTasks.length ? Math.round((done / masterTasks.length) * 100) : 0;
+                 return (
+                  <button 
+                    key={b.id} 
+                    onClick={() => setActiveBuildingId(b.id)} 
+                    className={`w-full p-4 rounded-2xl text-left transition-all group ${activeBuildingId === b.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-500 hover:bg-white/5 hover:text-white'}`}
+                  >
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[11px] font-black truncate max-w-[140px] uppercase tracking-tighter">{b.name}</span>
+                      <span className={`text-[9px] font-black px-1.5 rounded ${activeBuildingId === b.id ? 'bg-white/20' : 'bg-slate-800'}`}>{perc}%</span>
+                    </div>
+                    <div className="h-1 w-full bg-slate-900 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-700 ${activeBuildingId === b.id ? 'bg-white' : 'bg-indigo-600'}`} 
+                        style={{ width: `${perc}%` }} 
+                      />
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </nav>
 
-        <button 
-          onClick={() => { signOut(auth).then(() => setView('landing')); }}
-          className="mt-8 pt-8 border-t border-white/5 text-[10px] font-black uppercase flex items-center gap-2 hover:text-white"
-        >
-          <Lock size={12} /> Sign Out
-        </button>
+        <div className="mt-8 pt-8 border-t border-white/5 flex items-center justify-between">
+          <button 
+            onClick={() => { signOut(auth).then(() => window.location.reload()); }}
+            className="text-[10px] font-black uppercase flex items-center gap-2 hover:text-white transition-colors"
+          >
+            <Lock size={12} /> Sign Out
+          </button>
+          <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+        </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-24 px-10 border-b border-slate-200 flex justify-between items-center bg-white/70 backdrop-blur-xl">
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Facility</p>
-            <h1 className="text-xl font-black text-slate-900 truncate">{currentBuilding?.name}</h1>
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col min-w-0 bg-slate-50">
+        <header className="h-28 px-12 flex justify-between items-center bg-white border-b border-slate-200">
+          <div className="flex items-center gap-6">
+            <div className={`p-4 rounded-3xl ${buildingStats.percent === 100 ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
+              <ShieldCheck size={32} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Portfolio Snapshot</p>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tighter uppercase">{currentBuilding?.name}</h1>
+            </div>
           </div>
-          {masterTasks.length === 0 && (
-            <button 
-              onClick={seedMasterTasks}
-              disabled={seeding}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-black uppercase border border-indigo-100 hover:bg-indigo-100 transition-colors"
-            >
-              <Database size={14} /> {seeding ? 'Seeding...' : 'Seed Mandates'}
+          <div className="flex items-center gap-4">
+            {masterTasks.length === 0 && (
+              <button 
+                onClick={seedMasterTasks}
+                disabled={seeding}
+                className="flex items-center gap-3 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all disabled:opacity-50"
+              >
+                <Database size={16} /> {seeding ? 'Generating...' : 'Seed Mandates'}
+              </button>
+            )}
+            <button className="flex items-center gap-3 px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">
+              <Download size={16} /> Report
             </button>
-          )}
+          </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-10">
-          <div className="max-w-5xl mx-auto">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-              <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-hidden">
-                <BarChart3 className="text-indigo-600 mb-4" size={24} />
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Completion</p>
-                <h3 className="text-4xl font-black text-slate-900">{stats.percent}%</h3>
-                <div className="absolute bottom-0 left-0 h-1.5 bg-indigo-600" style={{ width: `${stats.percent}%` }} />
+        <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+          <div className="max-w-6xl mx-auto">
+            {/* Top Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:border-indigo-300 transition-all">
+                <BarChart3 className="text-indigo-600 mb-6" size={28} />
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Building Health</p>
+                <div className="flex items-baseline gap-2">
+                  <h3 className="text-5xl font-black text-slate-900 tracking-tighter">{buildingStats.percent}%</h3>
+                </div>
+                <div className="absolute bottom-0 left-0 w-full h-2 bg-slate-50">
+                  <div className="h-full bg-indigo-600 transition-all duration-1000 ease-out" style={{ width: `${buildingStats.percent}%` }} />
+                </div>
               </div>
-              <div className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
-                <ShieldAlert className="text-red-500 mb-4" size={24} />
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Pending Items</p>
-                <h3 className="text-4xl font-black text-slate-900">{stats.pending}</h3>
+
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:border-indigo-300 transition-all">
+                <Activity className="text-slate-900 mb-6" size={28} />
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">District Average</p>
+                <h3 className="text-5xl font-black text-slate-900 tracking-tighter">{districtStats.avg}%</h3>
+                <p className="text-[10px] font-bold text-indigo-500 mt-2 uppercase">Across {buildings.length} sites</p>
+              </div>
+
+              <div className="bg-indigo-600 p-8 rounded-[2.5rem] shadow-xl shadow-indigo-600/20 group cursor-default">
+                <ShieldAlert className="text-white/80 mb-6" size={28} />
+                <p className="text-[10px] font-black text-white/60 uppercase tracking-widest mb-2">Compliance Alert</p>
+                <h3 className="text-5xl font-black text-white tracking-tighter">{buildingStats.pending}</h3>
+                <p className="text-[10px] font-bold text-white/80 mt-2 uppercase tracking-wide">Tasks remaining</p>
               </div>
             </div>
 
-            <div className="space-y-4">
+            {/* Checklist Section */}
+            <div className="bg-white rounded-[3rem] border border-slate-200 p-10">
+              <div className="flex items-center justify-between mb-10">
+                <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-3">
+                  <Activity className="text-indigo-600" size={24} />
+                  Operational Mandates
+                </h3>
+                <div className="flex items-center gap-2">
+                   {['Health', 'Safety', 'Facilities', 'Security'].map(cat => (
+                     <span key={cat} className="px-3 py-1 bg-slate-50 text-[10px] font-black text-slate-400 border border-slate-100 rounded-full uppercase tracking-widest">{cat}</span>
+                   ))}
+                </div>
+              </div>
+
               {masterTasks.length === 0 ? (
-                <div className="text-center py-20 bg-white rounded-[2rem] border-2 border-dashed border-slate-200">
-                  <FileText className="mx-auto mb-4 text-slate-200" size={48} />
-                  <h4 className="font-black text-slate-900">Database Ready</h4>
-                  <p className="text-slate-400 text-sm">Click "Seed Mandates" in the header to populate the checklist.</p>
+                <div className="text-center py-24 flex flex-col items-center">
+                  <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mb-6 border-2 border-dashed border-slate-200">
+                    <Database size={32} />
+                  </div>
+                  <h4 className="text-xl font-black text-slate-900 mb-2">Compliance Ledger Empty</h4>
+                  <p className="text-slate-400 text-sm max-w-xs mb-8">Click "Seed Mandates" to populate the standard NYSED facility compliance list.</p>
                 </div>
               ) : (
-                masterTasks.map(task => {
-                  const log = complianceLogs[`${activeBuildingId}_${task.id}`];
-                  const isDone = log?.status === 'Complete';
-                  return (
-                    <div 
-                      key={task.id} 
-                      className={`p-6 rounded-3xl border-2 transition-all flex items-center gap-6 ${isDone ? 'bg-emerald-50/50 border-emerald-100' : 'bg-white border-slate-100'}`}
-                    >
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${isDone ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-400'}`}>
-                        {isDone ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-black text-sm text-slate-900">{task.name}</h4>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">{task.frequency} • {task.authority}</p>
-                      </div>
-                      <button 
-                        onClick={() => handleToggle(task.id)}
-                        className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase transition-all ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-900 text-white hover:bg-indigo-600'}`}
+                <div className="space-y-4">
+                  {masterTasks.map((task, idx) => {
+                    const log = complianceLogs[`${activeBuildingId}_${task.id}`];
+                    const isDone = log?.status === 'Complete';
+                    return (
+                      <div 
+                        key={task.id} 
+                        className={`group p-6 rounded-[2.2rem] border-2 transition-all flex items-center gap-8 animate-in fade-in slide-in-from-bottom-2`}
+                        style={{ animationDelay: `${idx * 50}ms` }}
                       >
-                        {isDone ? 'Done' : 'Mark Task'}
-                      </button>
-                    </div>
-                  );
-                })
+                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 transition-all duration-500 ${isDone ? 'bg-emerald-500 text-white rotate-[360deg]' : 'bg-slate-50 text-slate-300 group-hover:bg-slate-100 group-hover:text-slate-400'}`}>
+                          {isDone ? <CheckCircle2 size={28} /> : <AlertTriangle size={28} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-1">
+                            <h4 className={`font-black text-base tracking-tight transition-colors ${isDone ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{task.name}</h4>
+                            <span className="text-[8px] font-black px-2 py-0.5 bg-slate-100 text-slate-400 rounded-full uppercase tracking-widest">{task.category}</span>
+                          </div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                            {task.frequency} <span className="w-1 h-1 rounded-full bg-slate-200" /> {task.authority}
+                          </p>
+                        </div>
+                        <button 
+                          onClick={() => handleToggle(task.id)}
+                          className={`group/btn px-8 py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all flex items-center gap-2 ${isDone ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-slate-900 text-white hover:bg-indigo-600 hover:shadow-xl hover:shadow-indigo-600/20 active:scale-95'}`}
+                        >
+                          {isDone ? (
+                            <>Validated <CheckCircle2 size={14} /></>
+                          ) : (
+                            <>Mark Complete <ChevronRight size={14} className="group-hover/btn:translate-x-1 transition-transform" /></>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
@@ -465,7 +563,15 @@ export default function App() {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700;800&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { 
+          font-family: 'Plus Jakarta Sans', sans-serif; 
+          background: #f8fafc;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
     </div>
   );
