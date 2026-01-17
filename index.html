@@ -1,329 +1,344 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  LayoutDashboard, 
-  ShieldCheck, 
-  AlertTriangle, 
-  FileText, 
-  Settings, 
-  Bell,
-  Search,
-  Menu,
-  X,
-  CheckCircle2,
-  Clock,
-  ExternalLink,
-  LogIn,
-  Key
-} from 'lucide-react';
-import { 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
-} from 'recharts';
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInWithCustomToken,
-  onAuthStateChanged,
-  signOut
+  signInAnonymously, 
+  onAuthStateChanged, 
+  signOut,
+  signInWithCustomToken
 } from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  onSnapshot,
+  collection,
+  query,
+  updateDoc
+} from 'firebase/firestore';
+import { 
+  ShieldCheck, 
+  Building, 
+  Search, 
+  Check, 
+  LogOut, 
+  Loader2, 
+  Library, 
+  LayoutDashboard, 
+  Menu, 
+  ArrowRight, 
+  Download, 
+  Calendar,
+  Layers,
+  Key,
+  ExternalLink
+} from 'lucide-react';
 
-// --- CONFIGURATION ---
-const firebaseConfig = {
-  apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
-  authDomain: "compliance-checklist-d9c98.firebaseapp.com",
-  projectId: "compliance-checklist-d9c98",
-  storageBucket: "compliance-checklist-d9c98.firebasestorage.app",
-  messagingSenderId: "303424189265",
-  appId: "1:303424189265:web:53767634f420f882fb1970",
-  measurementId: "G-QKV1EDXYP4"
-};
+// =========================================================
+// FIREBASE CONFIGURATION
+// =========================================================
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
+      authDomain: "ny-compliance-v5.firebaseapp.com",
+      projectId: "ny-compliance-v5",
+      storageBucket: "ny-compliance-v5.appspot.com",
+      messagingSenderId: "333555777999",
+      appId: "1:333555777999:web:abcdef123456"
+    };
 
-const mockComplianceData = [
-  { month: 'Jan', score: 85 },
-  { month: 'Feb', score: 82 },
-  { month: 'Mar', score: 88 },
-  { month: 'Apr', score: 91 },
-  { month: 'May', score: 89 },
-  { month: 'Jun', score: 94 },
-];
+// Global handles for Firebase services
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-const App = () => {
+// RULE 1: Strict Paths - The appId is critical for multi-tenant isolation
+// We ensure we only use the last part of the appId if it's a long path to avoid segment count issues
+const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'ny-compliance-v5';
+const appId = rawAppId.split('/').pop(); 
+
+/**
+ * PATH HELPERS (Strictly adhering to RULE 1)
+ * Public: /artifacts/{appId}/public/data/{collection}/{docId} (6 segments)
+ * Private: /artifacts/{appId}/users/{userId}/{collection}/{docId} (6 segments)
+ */
+const getPublicDoc = (coll, id) => doc(db, 'artifacts', appId, 'public', 'data', coll, id);
+const getPublicColl = (coll) => collection(db, 'artifacts', appId, 'public', 'data', coll);
+const getUserDoc = (uid, coll, id) => doc(db, 'artifacts', appId, 'users', uid, coll, id);
+
+export default function App() {
   const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [isSidebarOpen, setSidebarOpen] = useState(true);
-  const [authError, setAuthError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState('loading'); 
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeView, setActiveView] = useState('checklist');
+  const [notification, setNotification] = useState(null);
+  
+  const [onboardData, setOnboardData] = useState({ 
+    districtName: '', 
+    userName: '', 
+    buildings: ['High School', 'Middle School', 'Elementary School'] 
+  });
+  const [userData, setUserData] = useState(null);
+  const [selectedBuilding, setSelectedBuilding] = useState('High School');
+  const [instances, setInstances] = useState([]);
 
+  const masterRequirements = [
+    { id: 'fire-1', name: 'Annual Fire Safety Inspection', category: 'Fire Safety', frequency: 'Annual', authority: 'NYSED' },
+    { id: 'water-1', name: 'Lead in Water Testing', category: 'Environmental', frequency: '3 Years', authority: 'NYS DOH' },
+    { id: 'bcs-1', name: 'Building Condition Survey', category: 'Facilities', frequency: '5 Years', authority: 'NYSED' },
+    { id: 'boiler-1', name: 'Boiler Inspection', category: 'Mechanical', frequency: 'Annual', authority: 'Dept of Labor' },
+    { id: 'visual-1', name: 'Annual Visual Inspection (AVI)', category: 'Facilities', frequency: 'Annual', authority: 'NYSED' }
+  ];
+
+  // RULE 3: Auth Before Queries
   useEffect(() => {
-    let auth;
-    try {
-      const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-      auth = getAuth(app);
-
-      const initAuth = async () => {
-        try {
-          // Rule 3: Auth Before Queries + Handle Custom Token specifically
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            try {
-              await signInWithCustomToken(auth, __initial_auth_token);
-              setAuthError(null);
-            } catch (tokenErr) {
-              // Handle auth/custom-token-mismatch or expired tokens
-              console.warn("Custom token failed (likely mismatch or expired). Proceeding to manual login state.");
-              // We don't throw here so the app still loads in 'Logged Out' state rather than crashing
-            }
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (tokenErr) {
+            console.warn("Custom token failed, using anonymous fallback");
+            await signInAnonymously(auth);
           }
-        } catch (err) {
-          console.error("Auth initialization error:", err);
-          setAuthError(err.message);
-        } finally {
-          setLoading(false);
+        } else {
+          await signInAnonymously(auth);
         }
-      };
-
-      initAuth();
-      
-      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-        setUser(currentUser);
+      } catch (err) {
+        console.error("Auth initialization error:", err);
         setLoading(false);
-      });
+      }
+    };
 
-      return () => unsubscribe();
-    } catch (error) {
-      console.error("Firebase initialization failed:", error);
-    }
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        setUser(u);
+        // RULE 1: Even number of segments required.
+        // /artifacts (1) / {appId} (2) / users (3) / {uid} (4) / settings (5) / profile (6)
+        const profileDocRef = getUserDoc(u.uid, 'settings', 'profile');
+        
+        onSnapshot(profileDocRef, (snap) => {
+          if (snap.exists()) {
+            setUserData(snap.data());
+            setAuthMode('authenticated');
+            if (snap.data().buildings?.length > 0) setSelectedBuilding(snap.data().buildings[0]);
+          } else {
+            setAuthMode('onboard');
+          }
+          setLoading(false);
+        }, (err) => {
+          console.error("Profile sync error:", err);
+          setLoading(false);
+        });
+      } else {
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const handleLogout = async () => {
+  // RULE 2 & 3: Sync Instances
+  useEffect(() => {
+    if (!user || authMode !== 'authenticated') return;
+
+    // RULE 1: Public path segments
+    // /artifacts (1) / {appId} (2) / public (3) / data (4) / instances (5)
+    const instColl = getPublicColl('instances');
+    
+    // RULE 2: No complex queries, fetch all and filter in JS
+    const unsubInst = onSnapshot(query(instColl), (snap) => {
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setInstances(all.filter(i => i.ownerId === user.uid));
+    }, (err) => console.error("Instances fetch error:", err));
+
+    return () => unsubInst();
+  }, [user, authMode]);
+
+  const showMsg = (m) => { setNotification(m); setTimeout(() => setNotification(null), 3000); };
+
+  const completeOnboarding = async () => {
+    if (!user) return;
+    if (!onboardData.userName || !onboardData.districtName) return showMsg("Please fill all fields");
+    
+    setLoading(true);
     try {
-      const auth = getAuth();
-      await signOut(auth);
-    } catch (err) {
-      console.error("Logout error:", err);
+      const profileDocRef = getUserDoc(user.uid, 'settings', 'profile');
+      await setDoc(profileDocRef, { ...onboardData, uid: user.uid, updatedAt: Date.now() });
+      setAuthMode('authenticated');
+    } catch (e) {
+      console.error(e);
+      showMsg("Error saving profile");
     }
+    setLoading(false);
   };
 
-  const NavItem = ({ id, icon: Icon, label }) => (
-    <button
-      onClick={() => setActiveTab(id)}
-      className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
-        activeTab === id 
-          ? 'bg-blue-600 text-white' 
-          : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-      }`}
-    >
-      <Icon size={20} />
-      {isSidebarOpen && <span className="font-medium">{label}</span>}
-    </button>
-  );
+  const importTask = async (task) => {
+    if (!user) return;
+    const instId = `${user.uid}-${selectedBuilding.replace(/\s+/g, '')}-${task.id}`;
+    const instRef = getPublicDoc('instances', instId);
+    await setDoc(instRef, { ...task, building: selectedBuilding, ownerId: user.uid, completed: false, updatedAt: Date.now() });
+    showMsg(`Added to ${selectedBuilding}`);
+  };
+
+  const toggleTask = async (id) => {
+    if (!user) return;
+    const task = instances.find(i => i.id === id);
+    const ref = getPublicDoc('instances', id);
+    await updateDoc(ref, { completed: !task.completed });
+  };
+
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
+        <Loader2 className="animate-spin text-indigo-600 mb-4" size={40} />
+        <p className="text-slate-500 font-medium">Loading District Data...</p>
+      </div>
+    );
+  }
+
+  if (authMode === 'onboard') {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
+        <div className="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-2xl">
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mb-8">
+            <ShieldCheck className="text-white" size={32} />
+          </div>
+          <h2 className="text-3xl font-bold text-slate-900 mb-2">Setup Profile</h2>
+          <p className="text-slate-500 mb-8">Let's get your district configured.</p>
+          <div className="space-y-4">
+            <input 
+              placeholder="Full Name" 
+              className="w-full p-4 bg-slate-50 rounded-2xl ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none" 
+              value={onboardData.userName} 
+              onChange={e => setOnboardData({...onboardData, userName: e.target.value})} 
+            />
+            <input 
+              placeholder="School District Name" 
+              className="w-full p-4 bg-slate-50 rounded-2xl ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none" 
+              value={onboardData.districtName} 
+              onChange={e => setOnboardData({...onboardData, districtName: e.target.value})} 
+            />
+            <button 
+              onClick={completeOnboarding} 
+              className="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+            >
+              Start Managing <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const buildingTasks = instances.filter(i => i.building === selectedBuilding);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex font-sans">
-      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-gray-900 border-r border-gray-800 transition-all duration-300 flex flex-col shadow-xl`}>
-        <div className="p-6 flex items-center justify-between">
-          {isSidebarOpen && (
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center shadow-lg shadow-blue-900/20">
-                <ShieldCheck className="text-white" size={20} />
-              </div>
-              <h1 className="text-lg font-bold tracking-tight">NY Compliance</h1>
+    <div className="flex h-screen w-full bg-[#F8FAFC] overflow-hidden text-slate-900">
+      <aside className={`md:w-72 bg-slate-950 text-slate-400 flex flex-col shrink-0 fixed md:relative h-full z-40 transition-all ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+        <div className="p-8 flex-1">
+          <div className="flex items-center gap-3 mb-12 text-white">
+            <div className="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center font-bold">NY</div>
+            <div className="truncate">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-400/60 leading-tight">{userData?.districtName}</p>
+              <p className="text-sm font-bold truncate text-white/90">{userData?.userName}</p>
             </div>
-          )}
-          <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400">
-            {isSidebarOpen ? <X size={20}/> : <Menu size={20}/>}
-          </button>
+          </div>
+          <nav className="space-y-1.5">
+            <button onClick={() => {setActiveView('checklist'); setIsMobileMenuOpen(false);}} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-xs font-bold transition-all ${activeView === 'checklist' ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-slate-900'}`}>
+              <LayoutDashboard size={18}/> Compliance Tracker
+            </button>
+            <button onClick={() => {setActiveView('library'); setIsMobileMenuOpen(false);}} className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-xs font-bold transition-all ${activeView === 'library' ? 'bg-indigo-600 text-white shadow-lg' : 'hover:bg-slate-900'}`}>
+              <Library size={18}/> Requirements Library
+            </button>
+          </nav>
         </div>
-
-        <nav className="flex-1 px-3 space-y-1">
-          <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
-          <NavItem id="audits" icon={ShieldCheck} label="Audits" />
-          <NavItem id="risks" icon={AlertTriangle} label="Risk Assessment" />
-          <NavItem id="reports" icon={FileText} label="Reports" />
-        </nav>
-
-        <div className="p-4 border-t border-gray-800">
-          <NavItem id="settings" icon={Settings} label="Settings" />
+        <div className="p-6 border-t border-slate-900">
+          <button onClick={() => signOut(auth)} className="w-full flex items-center justify-center gap-2 py-3.5 bg-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-all">
+            <LogOut size={16}/> End Session
+          </button>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-8 z-10">
-          <div className="relative w-96">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search compliance records..." 
-              className="w-full bg-gray-800 border-none rounded-full py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-            />
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header className="h-24 bg-white border-b border-slate-100 px-8 flex items-center justify-between z-10 shadow-sm">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden p-2 text-slate-400"><Menu/></button>
+            <h1 className="text-xl font-bold text-slate-900">
+              {activeView === 'checklist' ? 'Dashboard' : 'Requirement Library'}
+            </h1>
           </div>
-          <div className="flex items-center space-x-4">
-            <button className="p-2 text-gray-400 hover:text-white relative transition-colors">
-              <Bell size={20} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full"></span>
-            </button>
-            <div className="flex items-center space-x-3 bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700">
-              <div className="h-6 w-6 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600"></div>
-              <span className="text-xs font-semibold text-gray-300">
-                {user ? (user.email || user.phoneNumber || 'Authenticated User') : 'Guest Mode'}
-              </span>
-              {user && (
-                <button onClick={handleLogout} className="text-[10px] text-gray-500 hover:text-red-400 font-bold uppercase ml-2">
-                  Exit
-                </button>
-              )}
-            </div>
+
+          <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+            <Building size={16} className="text-indigo-600 ml-2"/>
+            <select 
+              className="bg-transparent text-sm font-bold text-slate-700 outline-none pr-4" 
+              value={selectedBuilding} 
+              onChange={e => setSelectedBuilding(e.target.value)}
+            >
+              {userData?.buildings?.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
           </div>
         </header>
 
-        <div className="p-8 overflow-y-auto flex-1 bg-gray-950">
-          {authError && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center space-x-3 text-red-500 text-sm">
-              <AlertTriangle size={18} />
-              <span>System Error: {authError}</span>
+        <div className="flex-1 overflow-y-auto p-8">
+          {notification && (
+            <div className="fixed top-28 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-3 rounded-full shadow-2xl z-50 animate-bounce">
+              <span className="text-xs font-bold uppercase tracking-widest">{notification}</span>
             </div>
           )}
 
-          {!user && !loading && (
-            <div className="mb-8 p-6 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-              <div className="flex items-start space-x-4">
-                <div className="p-2 bg-blue-500/20 rounded-lg text-blue-500">
-                  <LogIn size={24} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-blue-400 mb-1">Access Required</h3>
-                  <p className="text-gray-300 text-sm mb-4">
-                    The NY Compliance portal requires authentication via your managed <strong>Email</strong> or <strong>Phone</strong> provider.
-                  </p>
-                  <div className="flex space-x-3">
-                    <button className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-lg shadow-blue-900/20 active:scale-95">
-                      <Key size={14} /> <span>Portal Login</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex justify-between items-end mb-8">
-            <div>
-              <h2 className="text-3xl font-bold text-white tracking-tight">Compliance Overview</h2>
-              <div className="flex items-center mt-1 space-x-2">
-                <span className={`w-2 h-2 rounded-full ${user ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]'}`}></span>
-                <p className="text-gray-400 text-sm font-medium">
-                  {user ? 'District Portal Connected' : 'Limited Preview Mode • Authentication Required'}
-                </p>
-              </div>
-            </div>
-            <div className="flex space-x-3">
-              <button className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-bold transition-all border border-gray-700">
-                Export Data
-              </button>
-              <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20 active:scale-95">
-                New Audit
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {[
-              { label: 'Overall Score', value: '94.2%', icon: ShieldCheck, color: 'text-green-500', bg: 'bg-green-500/10' },
-              { label: 'Active Alerts', value: '3', icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-              { label: 'Pending Reviews', value: '12', icon: Clock, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-              { label: 'Completed', value: '158', icon: CheckCircle2, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
-            ].map((stat, i) => (
-              <div key={i} className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-gray-700 transition-colors shadow-sm group">
-                <div className={`w-12 h-12 rounded-xl ${stat.bg} ${stat.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                  <stat.icon size={26} />
-                </div>
-                <div className="text-3xl font-black mb-1">{stat.value}</div>
-                <div className="text-gray-500 text-sm font-semibold uppercase tracking-wider">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-sm">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-bold">Compliance Trend</h3>
-                <div className="text-xs font-bold text-gray-500 bg-gray-800 px-3 py-1 rounded-full uppercase tracking-widest">
-                  NY Ed Law 2-d Statistics
-                </div>
-              </div>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={mockComplianceData}>
-                    <defs>
-                      <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                    <XAxis 
-                      dataKey="month" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{fill: '#6b7280', fontSize: 12}}
-                      dy={10}
-                    />
-                    <YAxis 
-                      hide={true} 
-                      domain={[0, 100]}
-                    />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '12px', padding: '12px' }}
-                      itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                      cursor={{ stroke: '#3b82f6', strokeWidth: 1 }}
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="score" 
-                      stroke="#3b82f6" 
-                      strokeWidth={3}
-                      fillOpacity={1} 
-                      fill="url(#colorScore)" 
-                      animationDuration={1500}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-sm">
-              <h3 className="text-xl font-bold mb-6">Critical Feedback</h3>
+          <div className="max-w-5xl mx-auto">
+            {activeView === 'checklist' ? (
               <div className="space-y-6">
-                {[
-                  { title: 'Privacy Audit', time: '2h ago', status: 'Passed', color: 'text-green-500' },
-                  { title: 'Vendor Review', time: '5h ago', status: 'Pending', color: 'text-amber-500' },
-                  { title: 'Data Breach Simulation', time: '1d ago', status: 'Failed', color: 'text-red-500' },
-                  { title: 'Inventory Sync', time: '2d ago', status: 'Success', color: 'text-green-500' },
-                ].map((activity, i) => (
-                  <div key={i} className="flex items-start justify-between group cursor-pointer p-2 -m-2 rounded-lg hover:bg-gray-800/50 transition-colors">
+                {buildingTasks.length === 0 ? (
+                    <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2rem] p-16 text-center">
+                      <Layers className="mx-auto text-slate-200 mb-4" size={48} />
+                      <h3 className="text-lg font-bold text-slate-900">No Tasks Tracked</h3>
+                      <p className="text-slate-400 text-sm mt-2">Visit the Library to add NYS requirements to this building.</p>
+                    </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {buildingTasks.map(task => (
+                      <div key={task.id} className={`bg-white border border-slate-100 rounded-3xl p-6 flex items-center gap-6 transition-all ${task.completed ? 'opacity-50 grayscale bg-slate-50' : 'shadow-sm'}`}>
+                        <button onClick={() => toggleTask(task.id)} className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center ${task.completed ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-100 bg-slate-50'}`}>
+                          <Check size={24} strokeWidth={3}/>
+                        </button>
+                        <div className="flex-1">
+                          <h4 className={`font-bold ${task.completed ? 'line-through' : ''}`}>{task.name}</h4>
+                          <p className="text-[10px] font-black text-indigo-600/60 uppercase tracking-widest mt-1">{task.authority} • {task.frequency}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {masterRequirements.map(req => (
+                  <div key={req.id} className="bg-white p-8 rounded-[2rem] border border-slate-100 flex flex-col justify-between hover:shadow-lg transition-all">
                     <div>
-                      <div className="font-bold text-sm group-hover:text-blue-400 transition-colors">{activity.title}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{activity.time}</div>
+                      <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest">{req.category}</span>
+                      <h4 className="text-lg font-bold text-slate-900 mt-4 leading-tight">{req.name}</h4>
                     </div>
-                    <div className={`text-[10px] font-black uppercase tracking-tighter px-2 py-1 rounded bg-gray-800 ${activity.color}`}>
-                      {activity.status}
-                    </div>
+                    <button 
+                      onClick={() => importTask(req)}
+                      className="mt-8 w-full py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-indigo-600 transition-all"
+                    >
+                      <Download size={16}/> Add to {selectedBuilding}
+                    </button>
                   </div>
                 ))}
               </div>
-              <button className="w-full mt-8 py-3 border border-gray-800 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-800 hover:text-white transition-all">
-                VIEW HISTORY
-              </button>
-            </div>
+            )}
           </div>
         </div>
       </main>
     </div>
   );
-};
-
-export default App;
+}
