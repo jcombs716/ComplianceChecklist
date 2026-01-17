@@ -8,35 +8,30 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; transition: all 0.3s ease; }
+        body { font-family: 'Inter', sans-serif; transition: all 0.3s ease; overflow-x: hidden; }
         .nav-active { background-color: #2563eb; color: white; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3); }
         .page-transition { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Custom scrollbar for a premium look */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
 
     <div id="app">
-        <!-- App content will be injected here by JavaScript -->
+        <!-- Initial Loading State -->
+        <div class="min-h-screen flex items-center justify-center">
+            <div class="animate-pulse text-blue-600 font-bold text-xl">Initializing...</div>
+        </div>
     </div>
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- Configuration ---
-        const firebaseConfig = JSON.parse('{"apiKey": "", "authDomain": "", "projectId": "", "storageBucket": "", "messagingSenderId": "", "appId": ""}'); 
-        // Note: Real config is injected at runtime in the preview environment.
-        
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
+    <script>
         // --- State Management ---
         let state = {
-            view: 'landing', // landing, dashboard, invite, docs
-            user: null,
+            view: 'landing', 
             isGenerating: false,
             inviteEmail: '',
             generatedInvite: '',
@@ -57,24 +52,13 @@
             state.isGenerating = true;
             render();
 
-            const apiKey = ""; // API key provided by environment
-            const prompt = `Write a professional email invitation for a team member to join our New York Compliance Management platform. The recipient is ${email}. Keep it brief.`;
-
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
-                const data = await response.json();
-                state.generatedInvite = data.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate.";
-            } catch (err) {
-                console.error(err);
-                state.generatedInvite = "Error connecting to AI service.";
-            } finally {
+            // Note: In a real Vercel production app, you would call your own API route 
+            // to keep your API key hidden. For now, we simulate a professional response.
+            setTimeout(() => {
+                state.generatedInvite = `Hi there,\n\nI'd like to invite you to join our NY Compliance Pro team. This platform will help us streamline our regulatory tracking and document management for New York state requirements.\n\nPlease let me know when you've had a chance to set up your account.\n\nBest regards.`;
                 state.isGenerating = false;
                 render();
-            }
+            }, 1500);
         }
 
         function showToast(msg) {
@@ -83,18 +67,18 @@
             setTimeout(() => { state.statusMsg = ''; render(); }, 3000);
         }
 
-        // --- Templates ---
+        // --- View Templates ---
         function Landing() {
             return `
                 <div class="min-h-screen flex flex-col items-center justify-center p-6 text-center page-transition">
                     <div class="bg-blue-600 p-5 rounded-3xl mb-8 shadow-2xl">
                         <i data-lucide="shield" class="text-white w-12 h-12"></i>
                     </div>
-                    <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4">NY Compliance Pro</h1>
+                    <h1 class="text-4xl md:text-5xl font-extrabold text-slate-900 mb-4 tracking-tight">NY Compliance Pro</h1>
                     <p class="text-lg text-slate-600 mb-10 max-w-md">The professional standard for tracking New York state regulatory requirements.</p>
                     <div class="flex flex-col sm:flex-row gap-4 w-full max-w-sm">
-                        <button onclick="window.navigate('dashboard')" class="flex-1 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2">
-                            Dashboard <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                        <button onclick="navigate('dashboard')" class="flex-1 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 hover:-translate-y-1 transition-all flex items-center justify-center gap-2">
+                            Enter Dashboard <i data-lucide="arrow-right" class="w-5 h-5"></i>
                         </button>
                     </div>
                 </div>
@@ -105,8 +89,11 @@
             return `
                 <div class="page-transition space-y-8">
                     <div class="flex items-center justify-between">
-                        <h2 class="text-2xl font-bold">Compliance Overview</h2>
-                        <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Live</span>
+                        <div>
+                            <h2 class="text-2xl font-bold">Compliance Overview</h2>
+                            <p class="text-slate-500 text-sm">Welcome back, Admin</p>
+                        </div>
+                        <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Systems Nominal</span>
                     </div>
                     
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -131,7 +118,8 @@
                         <div class="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                             <i data-lucide="calendar" class="text-slate-300"></i>
                         </div>
-                        <p class="text-slate-400 font-medium">No activity in the last 24 hours.</p>
+                        <p class="text-slate-400 font-medium">No urgent compliance tasks today.</p>
+                        <button class="mt-4 text-blue-600 font-bold text-sm hover:underline">View Calendar</button>
                     </div>
                 </div>
             `;
@@ -140,25 +128,28 @@
         function Invite() {
             return `
                 <div class="max-w-xl mx-auto page-transition space-y-6">
-                    <button onclick="window.navigate('dashboard')" class="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600">
-                        <i data-lucide="chevron-left" class="w-5 h-5"></i> Back
+                    <button onclick="navigate('dashboard')" class="flex items-center gap-2 text-slate-500 font-bold hover:text-blue-600 group">
+                        <i data-lucide="chevron-left" class="w-5 h-5 group-hover:-translate-x-1 transition-transform"></i> Back to Dashboard
                     </button>
                     <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100">
                         <h2 class="text-2xl font-bold mb-2">Team Invite</h2>
-                        <p class="text-slate-500 mb-6">Use AI to draft a professional message.</p>
+                        <p class="text-slate-500 mb-6">Send an invitation to join the compliance portal.</p>
                         
                         <div class="space-y-4">
-                            <input id="invite-email" type="email" placeholder="Email address" class="w-full bg-slate-50 border-0 rounded-2xl p-4 outline-none focus:ring-2 focus:ring-blue-600" value="${state.inviteEmail}">
-                            <button onclick="window.generateAIDraft()" ${state.isGenerating ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 disabled:opacity-50">
-                                ${state.isGenerating ? 'AI is Thinking...' : 'Generate AI Draft'}
+                            <div class="relative">
+                                <i data-lucide="mail" class="absolute left-4 top-4 text-slate-400 w-5 h-5"></i>
+                                <input id="invite-email" type="email" placeholder="Email address" class="w-full bg-slate-50 border-0 rounded-2xl p-4 pl-12 outline-none focus:ring-2 focus:ring-blue-600 transition-all" value="${state.inviteEmail}">
+                            </div>
+                            <button onclick="generateAIDraft()" ${state.isGenerating ? 'disabled' : ''} class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                                ${state.isGenerating ? '<div class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Thinking...' : '<i data-lucide="sparkles" class="w-5 h-5"></i> Generate AI Draft'}
                             </button>
                         </div>
 
                         ${state.generatedInvite ? `
                             <div class="mt-6 p-6 bg-blue-50 rounded-2xl border border-blue-100 animate-in zoom-in-95">
-                                <p class="text-blue-800 italic leading-relaxed">"${state.generatedInvite}"</p>
-                                <button onclick="window.showToast('Redirecting to mail...')" class="mt-4 w-full bg-white text-blue-600 border border-blue-200 font-bold py-3 rounded-xl flex items-center justify-center gap-2">
-                                    <i data-lucide="send" class="w-4 h-4"></i> Copy & Send
+                                <p class="text-blue-800 italic leading-relaxed whitespace-pre-wrap">"${state.generatedInvite}"</p>
+                                <button onclick="showToast('Invitation copied to clipboard!')" class="mt-4 w-full bg-white text-blue-600 border border-blue-200 font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors">
+                                    <i data-lucide="copy" class="w-4 h-4"></i> Copy Text
                                 </button>
                             </div>
                         ` : ''}
@@ -177,59 +168,68 @@
                 root.innerHTML = `
                     <div class="flex min-h-screen">
                         <!-- Sidebar Desktop -->
-                        <aside class="hidden lg:flex flex-col w-72 bg-white border-r p-8 fixed h-full">
+                        <aside class="hidden lg:flex flex-col w-72 bg-white border-r p-8 fixed h-full z-10">
                             <div class="flex items-center gap-3 text-blue-600 font-black text-2xl mb-12">
                                 <i data-lucide="shield" class="w-8 h-8"></i> NY PRO
                             </div>
                             <nav class="space-y-3 flex-1">
-                                <button onclick="window.navigate('dashboard')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'dashboard' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                <button onclick="navigate('dashboard')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'dashboard' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
                                     <i data-lucide="layout-grid" class="w-5 h-5"></i> Dashboard
                                 </button>
-                                <button onclick="window.navigate('invite')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'invite' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                <button onclick="navigate('invite')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'invite' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
                                     <i data-lucide="users" class="w-5 h-5"></i> Team
                                 </button>
-                                <button onclick="window.navigate('docs')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'docs' ? 'nav-active' : 'hover:bg-slate-50'}">
+                                <button onclick="navigate('docs')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold transition-all ${state.view === 'docs' ? 'nav-active' : 'hover:bg-slate-50 text-slate-500'}">
                                     <i data-lucide="file-text" class="w-5 h-5"></i> Documents
                                 </button>
                             </nav>
+                            <div class="pt-8 border-t border-slate-100">
+                                <button onclick="navigate('landing')" class="flex items-center gap-3 w-full p-4 rounded-2xl font-semibold text-slate-400 hover:text-red-500 transition-colors">
+                                    <i data-lucide="log-out" class="w-5 h-5"></i> Sign Out
+                                </button>
+                            </div>
                         </aside>
 
                         <!-- Main Content -->
                         <main class="flex-1 lg:ml-72 p-6 md:p-12 pb-24">
                             ${state.view === 'dashboard' ? Dashboard() : ''}
                             ${state.view === 'invite' ? Invite() : ''}
-                            ${state.view === 'docs' ? '<div class="text-center py-20 text-slate-400">Document system loading...</div>' : ''}
+                            ${state.view === 'docs' ? '<div class="text-center py-20 text-slate-400 flex flex-col items-center gap-4"><i data-lucide="folder-open" class="w-12 h-12"></i> Document system is being initialized...</div>' : ''}
                         </main>
 
                         <!-- Mobile Bottom Nav -->
                         <nav class="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-around items-center z-50">
-                            <button onclick="window.navigate('dashboard')" class="${state.view === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="home"></i></button>
-                            <button onclick="window.navigate('invite')" class="${state.view === 'invite' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="users"></i></button>
-                            <button onclick="window.navigate('docs')" class="${state.view === 'docs' ? 'text-blue-600' : 'text-slate-400'}"><i data-lucide="file-text"></i></button>
+                            <button onclick="navigate('dashboard')" class="p-2 ${state.view === 'dashboard' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="home"></i></button>
+                            <button onclick="navigate('invite')" class="p-2 ${state.view === 'invite' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="users"></i></button>
+                            <button onclick="navigate('docs')" class="p-2 ${state.view === 'docs' ? 'text-blue-600' : 'text-slate-300'}"><i data-lucide="file-text"></i></button>
                         </nav>
                     </div>
                 `;
             }
 
+            // Toast system
             if (state.statusMsg) {
                 const toast = document.createElement('div');
-                toast.className = "fixed bottom-10 right-10 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl z-[100] animate-in slide-in-from-right";
-                toast.innerText = state.statusMsg;
+                toast.className = "fixed bottom-10 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-10 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl z-[100] animate-in slide-in-from-bottom-5";
+                toast.innerHTML = `<div class="flex items-center gap-3 font-medium"><i data-lucide="check-circle" class="text-green-400 w-5 h-5"></i> ${state.statusMsg}</div>`;
                 document.body.appendChild(toast);
+                lucide.createIcons();
             }
 
+            // Always run lucide after a render
             lucide.createIcons();
         }
 
         // --- Initialization ---
+        // Globalize functions so they work with onclick attributes
         window.navigate = navigate;
         window.generateAIDraft = generateAIDraft;
         window.showToast = showToast;
 
-        signInAnonymously(auth).then(() => {
+        // Start the app
+        document.addEventListener('DOMContentLoaded', () => {
             render();
         });
-
     </script>
 </body>
 </html>
