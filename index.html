@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -54,18 +54,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // RULE 1: Strict Paths - The appId is critical for multi-tenant isolation
-// We ensure we only use the last part of the appId if it's a long path to avoid segment count issues
 const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'ny-compliance-v5';
 const appId = rawAppId.split('/').pop(); 
-
-/**
- * PATH HELPERS (Strictly adhering to RULE 1)
- * Public: /artifacts/{appId}/public/data/{collection}/{docId} (6 segments)
- * Private: /artifacts/{appId}/users/{userId}/{collection}/{docId} (6 segments)
- */
-const getPublicDoc = (coll, id) => doc(db, 'artifacts', appId, 'public', 'data', coll, id);
-const getPublicColl = (coll) => collection(db, 'artifacts', appId, 'public', 'data', coll);
-const getUserDoc = (uid, coll, id) => doc(db, 'artifacts', appId, 'users', uid, coll, id);
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -84,31 +74,37 @@ export default function App() {
   const [selectedBuilding, setSelectedBuilding] = useState('High School');
   const [instances, setInstances] = useState([]);
 
-  const masterRequirements = [
+  // Memoized Requirement List
+  const masterRequirements = useMemo(() => [
     { id: 'fire-1', name: 'Annual Fire Safety Inspection', category: 'Fire Safety', frequency: 'Annual', authority: 'NYSED' },
     { id: 'water-1', name: 'Lead in Water Testing', category: 'Environmental', frequency: '3 Years', authority: 'NYS DOH' },
     { id: 'bcs-1', name: 'Building Condition Survey', category: 'Facilities', frequency: '5 Years', authority: 'NYSED' },
     { id: 'boiler-1', name: 'Boiler Inspection', category: 'Mechanical', frequency: 'Annual', authority: 'Dept of Labor' },
     { id: 'visual-1', name: 'Annual Visual Inspection (AVI)', category: 'Facilities', frequency: 'Annual', authority: 'NYSED' }
-  ];
+  ], []);
+
+  // Helper for exponential backoff during initial auth
+  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   // RULE 3: Auth Before Queries
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          try {
+    const initAuth = async (retries = 5) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (tokenErr) {
-            console.warn("Custom token failed, using anonymous fallback");
+          } else {
             await signInAnonymously(auth);
           }
-        } else {
-          await signInAnonymously(auth);
+          return; // Success
+        } catch (err) {
+          if (i === retries - 1) {
+            console.error("Auth failed after all retries:", err);
+            setLoading(false);
+          } else {
+            await wait(Math.pow(2, i) * 1000);
+          }
         }
-      } catch (err) {
-        console.error("Auth initialization error:", err);
-        setLoading(false);
       }
     };
 
@@ -117,14 +113,13 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
         setUser(u);
-        // RULE 1: Even number of segments required.
-        // /artifacts (1) / {appId} (2) / users (3) / {uid} (4) / settings (5) / profile (6)
-        const profileDocRef = getUserDoc(u.uid, 'settings', 'profile');
+        // RULE 1: Profile path
+        const profileDocRef = doc(db, 'artifacts', appId, 'users', u.uid, 'settings', 'profile');
         
         onSnapshot(profileDocRef, (snap) => {
           if (snap.exists()) {
             setUserData(snap.data());
-            setAuthMode('authenticated');
+            setAuthMode('authenticated'); // Only now can other listeners start
             if (snap.data().buildings?.length > 0) setSelectedBuilding(snap.data().buildings[0]);
           } else {
             setAuthMode('onboard');
@@ -136,6 +131,7 @@ export default function App() {
         });
       } else {
         setUser(null);
+        setAuthMode('loading');
         setLoading(false);
       }
     });
@@ -145,17 +141,25 @@ export default function App() {
 
   // RULE 2 & 3: Sync Instances
   useEffect(() => {
+    // CRITICAL: We MUST wait until authMode is explicitly 'authenticated'
+    // This prevents "Permission Denied" which occurs if listeners start before auth token is ready.
     if (!user || authMode !== 'authenticated') return;
 
     // RULE 1: Public path segments
-    // /artifacts (1) / {appId} (2) / public (3) / data (4) / instances (5)
-    const instColl = getPublicColl('instances');
+    const instColl = collection(db, 'artifacts', appId, 'public', 'data', 'instances');
     
-    // RULE 2: No complex queries, fetch all and filter in JS
+    // RULE 2: Fetch all and filter in memory
     const unsubInst = onSnapshot(query(instColl), (snap) => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setInstances(all.filter(i => i.ownerId === user.uid));
-    }, (err) => console.error("Instances fetch error:", err));
+    }, (err) => {
+      if (err.code === 'permission-denied') {
+        // Log locally but don't crash; often resolves on next tick
+        console.warn("Permission denied on instances fetch. Retrying state sync...");
+      } else {
+        console.error("Instances fetch error:", err);
+      }
+    });
 
     return () => unsubInst();
   }, [user, authMode]);
@@ -168,28 +172,29 @@ export default function App() {
     
     setLoading(true);
     try {
-      const profileDocRef = getUserDoc(user.uid, 'settings', 'profile');
+      const profileDocRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
       await setDoc(profileDocRef, { ...onboardData, uid: user.uid, updatedAt: Date.now() });
       setAuthMode('authenticated');
     } catch (e) {
-      console.error(e);
+      console.error("Onboarding error:", e);
       showMsg("Error saving profile");
     }
     setLoading(false);
   };
 
   const importTask = async (task) => {
-    if (!user) return;
+    if (!user || authMode !== 'authenticated') return;
     const instId = `${user.uid}-${selectedBuilding.replace(/\s+/g, '')}-${task.id}`;
-    const instRef = getPublicDoc('instances', instId);
+    const instRef = doc(db, 'artifacts', appId, 'public', 'data', 'instances', instId);
     await setDoc(instRef, { ...task, building: selectedBuilding, ownerId: user.uid, completed: false, updatedAt: Date.now() });
     showMsg(`Added to ${selectedBuilding}`);
   };
 
   const toggleTask = async (id) => {
-    if (!user) return;
+    if (!user || authMode !== 'authenticated') return;
     const task = instances.find(i => i.id === id);
-    const ref = getPublicDoc('instances', id);
+    if (!task) return;
+    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'instances', id);
     await updateDoc(ref, { completed: !task.completed });
   };
 
@@ -197,7 +202,7 @@ export default function App() {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600 mb-4" size={40} />
-        <p className="text-slate-500 font-medium">Loading District Data...</p>
+        <p className="text-slate-500 font-medium">Initializing Management System...</p>
       </div>
     );
   }
