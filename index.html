@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, doc, setDoc, collection, query, onSnapshot, 
-  deleteDoc, where, serverTimestamp, getDoc, updateDoc, addDoc 
+  deleteDoc, where, serverTimestamp, getDoc, updateDoc, addDoc, arrayUnion 
 } from 'firebase/firestore';
 import { 
   getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken, 
@@ -10,9 +10,9 @@ import {
 } from 'firebase/auth';
 import { 
   ShieldCheck, Building2, AlertCircle, CheckCircle2, Plus, Trash2, 
-  Settings, Loader2, LayoutDashboard, Database, ArrowRight, ArrowLeft, 
-  ExternalLink, Users, FileText, Calendar, Bell, ChevronRight, Share2,
-  Lock, UserPlus, ClipboardCheck, Info
+  Settings, Loader2, LayoutDashboard, Database, ArrowRight,
+  ExternalLink, FileText, Calendar, Bell, Info, Lock, Share2, 
+  Users, ChevronLeft, ChevronRight, Download, Eye, UserShield
 } from 'lucide-react';
 
 // --- INITIALIZATION ---
@@ -20,634 +20,289 @@ const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'nys-compliance-portal';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'nys-compliance-statewide-v1';
 
-// --- MASTER DATA ---
-const MASTER_TASKS = [
-  { category: 'Facilities', subcategory: 'Structural', task: 'Visual Inspection', frequency: 'Annually', authority: 'NYSED', action: 'Inspection', performedBy: 'Team (incl. Code Official)', citation: '8 NYCRR § 155.4', citationUrl: 'https://govt.westlaw.com/nycrr/Document/I5177a412cd1711dda432a117e6e0a345' },
-  { category: 'Facilities', subcategory: 'Structural', task: 'Building Condition Survey (BCS)', frequency: 'Every 5 Years', authority: 'NYSED', action: 'Survey & Report', performedBy: 'Licensed Architect/PE', citation: '8 NYCRR § 155.4', citationUrl: 'https://govt.westlaw.com/nycrr/Document/I5177a412cd1711dda432a117e6e0a345' },
-  { category: 'Facilities', subcategory: 'Planning', task: '5-Year Capital Facilities Plan', frequency: 'Annual Update', authority: 'NYSED', action: 'Review & Update', performedBy: 'BOE / Facilities Admin', citation: '8 NYCRR § 155.1', citationUrl: 'https://govt.westlaw.com/nycrr/Document/I51630043cd1711dda432a117e6e0a345' },
-  { category: 'Facilities', subcategory: 'Mechanical', task: 'Boiler Inspection (High Pressure)', frequency: 'Annual', authority: 'NYS Dept of Labor', action: 'Inspection', performedBy: 'Authorized Inspector', citation: 'Labor Law § 204', citationUrl: 'https://www.nysenate.gov/legislation/laws/LAB/204' },
-  { category: 'Facilities', subcategory: 'Mechanical', task: 'Boiler Inspection (Low Pressure)', frequency: 'Every 2 Years', authority: 'NYS Dept of Labor', action: 'Inspection', performedBy: 'Authorized Inspector', citation: 'Labor Law § 204', citationUrl: 'https://www.nysenate.gov/legislation/laws/LAB/204' },
-  { category: 'Facilities', subcategory: 'Mechanical', task: 'Elevator / Chairlift Inspection', frequency: 'Every 6 Months', authority: 'NYS Code Enforcement', action: 'Inspection', performedBy: 'Licensed Inspector', citation: 'PMCNYS § 606.1', citationUrl: 'https://codes.iccsafe.org/content/PMCNYS2020P1' },
-  { category: 'Facilities', subcategory: 'Water Systems', task: 'Backflow Prevention Test', frequency: 'Annual', authority: 'NYS DOH', action: 'Testing', performedBy: 'Certified Tester', citation: '10 NYCRR § 5-1.31', citationUrl: 'https://regs.health.ny.gov/content/section-5-131-cross-connection-control' },
-  { category: 'Facilities', subcategory: 'Equipment', task: 'Gym Bleacher Inspection', frequency: 'Annual', authority: 'NYS Fire Code', action: 'Inspection', performedBy: 'Qualified Person', citation: 'FCNYS § 1029.1.1', citationUrl: 'https://codes.iccsafe.org/content/FCNYS2020P1' },
-  { category: 'Facilities', subcategory: 'Equipment', task: 'Stage Rigging Inspection', frequency: 'Annual', authority: 'OSHA', action: 'Inspection', performedBy: 'Qualified Person', citation: 'OSHA General Duty', citationUrl: 'https://www.osha.gov/laws-regs/standardoccupational/1910' },
-  { category: 'Facilities', subcategory: 'Recreational', task: 'Swimming Pool Permit', frequency: 'Annual', authority: 'County DOH', action: 'Permit Renewal', performedBy: 'County DOH', citation: '10 NYCRR § 6-1.4', citationUrl: 'https://regs.health.ny.gov/content/section-6-14-permit-issuance' },
-  { category: 'Fire Safety', subcategory: 'General', task: 'Annual Fire Safety Inspection', frequency: 'Annually', authority: 'NYSED / Fire Code', action: 'Inspection', performedBy: 'Code Enforcement Official', citation: 'Ed. Law § 807-A', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/807-A' },
-  { category: 'Fire Safety', subcategory: 'Drills', task: 'Fire Evacuation Drills', frequency: '12x Year', authority: 'NYSED', action: 'Drill Execution', performedBy: 'Principal / In-House', citation: 'Ed. Law § 807', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/807' },
-  { category: 'Fire Safety', subcategory: 'Drills', task: 'Lockdown Drills', frequency: '4x Year', authority: 'NYSED', action: 'Drill Execution', performedBy: 'Principal / In-House', citation: 'Ed. Law § 807', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/807' },
-  { category: 'Environmental', subcategory: 'Water', task: 'Lead in Water Testing', frequency: 'Every 3 Years', authority: 'NYS DOH', action: 'Sampling & Lab Test', performedBy: 'In-House / Lab', citation: '10 NYCRR § 67-4', citationUrl: 'https://regs.health.ny.gov/content/subpart-67-4-lead-testing-school-drinking-water' },
-  { category: 'Environmental', subcategory: 'Asbestos', task: 'Asbestos 6-Month Surveillance', frequency: 'Every 6 Months', authority: 'EPA (AHERA)', action: 'Visual Inspection', performedBy: 'In-House / LEA Designee', citation: '40 CFR § 763.92', citationUrl: 'https://www.ecfr.gov/current/title-40/chapter-I/subchapter-R/part-763/subpart-E/section-763.92' },
+// --- DATA STRUCTURES ---
+const PRELOADED_TASKS = [
+  { category: 'Facilities', subcategory: 'Structural', task: 'Visual Inspection', frequency: 'Annually', authority: 'NYSED', action: 'Inspection', performedBy: 'Team (incl. Code Official)', citation: '8 NYCRR § 155.4', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/409', days: 365 },
+  { category: 'Facilities', subcategory: 'Structural', task: 'Building Condition Survey (BCS)', frequency: 'Every 5 Years', authority: 'NYSED', action: 'Survey & Report', performedBy: 'Licensed Architect/PE', citation: '8 NYCRR § 155.4', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/409', days: 1825 },
+  { category: 'Facilities', subcategory: 'Planning', task: '5-Year Capital Facilities Plan', frequency: 'Annual Update', authority: 'NYSED', action: 'Review & Update', performedBy: 'BOE / Facilities Admin', citation: '8 NYCRR § 155.1', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/409', days: 365 },
+  { category: 'Facilities', subcategory: 'Mechanical', task: 'Boiler Inspection (High Pressure)', frequency: 'Annual', authority: 'NYS Dept of Labor', action: 'Inspection', performedBy: 'Authorized Inspector', citation: 'Labor Law § 204', citationUrl: 'https://www.nysenate.gov/legislation/laws/LAB/204', days: 365 },
+  { category: 'Facilities', subcategory: 'Mechanical', task: 'Boiler Inspection (Low Pressure)', frequency: 'Every 2 Years', authority: 'NYS Dept of Labor', action: 'Inspection', performedBy: 'Authorized Inspector', citation: 'Labor Law § 204', citationUrl: 'https://www.nysenate.gov/legislation/laws/LAB/204', days: 730 },
+  { category: 'Facilities', subcategory: 'Mechanical', task: 'Elevator / Chairlift Inspection', frequency: 'Every 6 Months', authority: 'NYS Code Enforcement', action: 'Inspection', performedBy: 'Licensed Inspector', citation: 'PMCNYS § 606.1', citationUrl: 'https://codes.iccsafe.org/content/PMCNYS2020P1', days: 182 },
+  { category: 'Facilities', subcategory: 'Water Systems', task: 'Backflow Prevention Test', frequency: 'Annual', authority: 'NYS DOH', action: 'Testing', performedBy: 'Certified Tester', citation: '10 NYCRR § 5-1.31', citationUrl: 'https://regs.health.ny.gov/content/section-5-131-cross-connection-control', days: 365 },
+  { category: 'Fire Safety', subcategory: 'General', task: 'Annual Fire Safety Inspection', frequency: 'Annually', authority: 'NYSED / Fire Code', action: 'Inspection', performedBy: 'Code Enforcement Official', citation: 'Ed. Law § 807-A', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/807-A', days: 365 },
+  { category: 'Fire Safety', subcategory: 'Drills', task: 'Fire Evacuation Drills', frequency: '12x Year (8 by Dec 1)', authority: 'NYSED', action: 'Drill Execution', performedBy: 'Principal / In-House', citation: 'Ed. Law § 807', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/807', days: 30 },
+  { category: 'Environmental', subcategory: 'Water', task: 'Lead in Water Testing', frequency: 'Every 3 Years', authority: 'NYS DOH', action: 'Sampling & Lab Test', performedBy: 'In-House / Lab', citation: '10 NYCRR § 67-4', citationUrl: 'https://www.health.ny.gov/environmental/water/drinking/lead/lead_testing_schools.htm', days: 1095 },
+  { category: 'Environmental', subcategory: 'Asbestos', task: 'Asbestos 6-Month Surveillance', frequency: 'Every 6 Months', authority: 'EPA (AHERA)', action: 'Visual Inspection', performedBy: 'In-House / LEA Designee', citation: '40 CFR § 763.92', citationUrl: 'https://www.epa.gov/asbestos/asbestos-and-school-buildings', days: 182 },
+  { category: 'Admin/Transportation', subcategory: 'Planning', task: 'School Safety Plan (SAVE)', frequency: 'Annual (by Sept 1)', authority: 'NYSED', action: 'Plan Update', performedBy: 'Safety Team / BOE', citation: 'Ed. Law § 2801-A', citationUrl: 'https://www.nysenate.gov/legislation/laws/EDN/2801-A', days: 365 }
 ];
 
-const FREQUENCY_DAYS = {
-  'Annually': 365, 'Annual': 365, 'Every 2 Years': 730, 'Every 3 Years': 1095, 
-  'Every 5 Years': 1825, 'Every 6 Months': 182, 'Monthly': 30, '4x Year': 90, 
-  '12x Year': 30, 'Annual Update': 365, 'Weekly': 7, 'Quarterly': 91
-};
-
-// --- HELPERS ---
-const calculateNextDue = (lastDate, freq) => {
-  if (!lastDate) return null;
-  const date = new Date(lastDate);
-  const days = FREQUENCY_DAYS[freq] || 365;
-  date.setDate(date.getDate() + days);
-  return date.toISOString().split('T')[0];
-};
-
-const getStatus = (dueDate) => {
-  if (!dueDate) return 'Pending';
-  const today = new Date();
-  const due = new Date(dueDate);
-  const diff = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
-  if (diff < 0) return 'Overdue';
-  if (diff <= 30) return 'Due Soon';
-  return 'Compliant';
-};
-
-// --- MAIN APP ---
 export default function App() {
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [district, setDistrict] = useState(null);
+  const [step, setStep] = useState('auth'); // auth, district, selection, dashboard, share, admin
+  const [authMode, setAuthMode] = useState('signin'); // signin, register
+  
+  // Form States
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [districtName, setDistrictName] = useState('');
   const [buildings, setBuildings] = useState([]);
-  const [userTasks, setUserTasks] = useState([]);
-  const [step, setStep] = useState('auth'); // auth, setup, buildings, selection, dashboard, admin
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [error, setError] = useState(null);
+  const [newBuilding, setNewBuilding] = useState('');
+  const [tasks, setTasks] = useState([]);
+  const [shareEmail, setShareEmail] = useState('');
 
-  // 1. Auth Listener
+  // 1. AUTHENTICATION
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (e) { console.error("Auth Init Error", e); }
-    };
-    initAuth();
-    return onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (!u) {
-        setLoading(false);
+      if (u) {
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', u.uid);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          setProfile(snap.data());
+          setStep('dashboard');
+        } else {
+          setStep('district');
+        }
+      } else {
         setStep('auth');
       }
-    });
-  }, []);
-
-  // 2. Data Sync
-  useEffect(() => {
-    if (!user) return;
-
-    // Admin Check
-    setIsAdmin(user.email === 'admin@nysed.gov'); // Mock admin check
-
-    // Fetch District (Public Data Path per Rule 1)
-    const dQuery = query(collection(db, 'artifacts', appId, 'public', 'data', 'districts'), where('members', 'array-contains', user.uid));
-    
-    const unsubDistrict = onSnapshot(dQuery, (snap) => {
-      if (!snap.empty) {
-        const dDoc = snap.docs[0];
-        setDistrict({ id: dDoc.id, ...dDoc.data() });
-        setStep('dashboard');
-      } else {
-        setStep('setup');
-      }
-    });
-
-    // Fetch Tasks
-    const unsubTasks = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), (snap) => {
-      const allTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setUserTasks(allTasks.filter(t => t.userId === user.uid || t.districtId === district?.id));
       setLoading(false);
     });
+    return unsub;
+  }, []);
 
-    return () => { unsubDistrict(); unsubTasks(); };
-  }, [user, district?.id]);
+  // 2. REAL-TIME TASK SYNC (District Level Collaboration)
+  useEffect(() => {
+    if (!user || !profile?.districtId) return;
 
-  // --- ACTIONS ---
-  const handleAuthAction = async (type, email, pass) => {
+    // RULE 1: Use strictly formatted paths for collaboration
+    const q = query(
+      collection(db, 'artifacts', appId, 'public', 'data', 'district_tasks'),
+      where('districtId', '==', profile.districtId)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setTasks(list);
+    }, (err) => console.error(err));
+
+    return unsub;
+  }, [user, profile]);
+
+  // --- HANDLERS ---
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     try {
-      if (type === 'signup') await createUserWithEmailAndPassword(auth, email, pass);
-      else await signInWithEmailAndPassword(auth, email, pass);
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleShare = (email) => {
-    const subject = encodeURIComponent("Invitation to NYS Compliance Pro");
-    const body = encodeURIComponent(`You've been invited to collaborate on district compliance. Join here: [Application Link]`);
-    window.open(`mailto:${email}?subject=${subject}&body=${body}`);
-  };
-
-  const finalizeSetup = async (districtName, buildingList) => {
-    const dRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'districts'), {
-      name: districtName,
-      buildings: buildingList,
-      members: [user.uid],
-      createdAt: serverTimestamp()
-    });
-    setDistrict({ id: dRef.id, name: districtName, buildings: buildingList });
-    setStep('selection');
-  };
-
-  const toggleTaskSelection = async (master, buildingsSelected) => {
-    const existing = userTasks.find(t => t.task === master.task && t.districtId === district.id);
-    if (existing) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', existing.id));
-    } else {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), {
-        ...master,
-        userId: user.uid,
-        districtId: district.id,
-        appliedBuildings: buildingsSelected,
-        lastCompleted: null,
-        nextDue: null,
-        status: 'Pending',
-        docs: []
-      });
+      if (authMode === 'register') {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        // Initial profile creation happens at Step 3
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const updateTask = async (taskId, updates) => {
-    const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', taskId);
-    await updateDoc(taskRef, updates);
+  const handleSetupDistrict = async () => {
+    if (!districtName || buildings.length === 0) return;
+    const districtId = `dist_${user.uid}_${Date.now()}`;
+    const pData = {
+      districtName,
+      buildings,
+      districtId,
+      role: 'user',
+      uid: user.uid
+    };
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid), pData);
+    setProfile(pData);
+    setStep('selection');
   };
 
-  if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-8 text-center">
-      <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
-      <h1 className="text-xl font-bold text-slate-900 tracking-tight">Initializing State Matrix...</h1>
-      <p className="text-slate-500 text-sm">Synchronizing with NYS Regulatory Databases</p>
+  const initializeTasks = async (selectedTemplateIndices) => {
+    setLoading(true);
+    for (const idx of selectedTemplateIndices) {
+      const template = PRELOADED_TASKS[idx];
+      for (const bld of buildings) {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'district_tasks'), {
+          ...template,
+          building: bld,
+          districtId: profile.districtId,
+          lastCompleted: null,
+          nextDue: null,
+          status: 'Pending',
+          documents: []
+        });
+      }
+    }
+    setStep('dashboard');
+    setLoading(false);
+  };
+
+  const updateTaskStatus = async (taskId, date) => {
+    const task = tasks.find(t => t.id === taskId);
+    const lastDate = new Date(date);
+    const nextDate = new Date(lastDate);
+    nextDate.setDate(nextDate.getDate() + (task.days || 365));
+    
+    const status = nextDate < new Date() ? 'Overdue' : 
+                   (nextDate - new Date()) / (1000*60*60*24) < 30 ? 'Due Soon' : 'Compliant';
+
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'district_tasks', taskId), {
+      lastCompleted: date,
+      nextDue: nextDate.toISOString().split('T')[0],
+      status
+    });
+  };
+
+  // --- UI COMPONENTS ---
+
+  const StepAuth = () => (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl shadow-blue-100 p-10 border border-slate-100">
+        <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white mb-8 mx-auto shadow-lg shadow-blue-200">
+          <ShieldCheck size={32} />
+        </div>
+        <h2 className="text-2xl font-black text-center text-slate-900 tracking-tight mb-2">NY Compliance Portal</h2>
+        <p className="text-center text-slate-500 text-sm font-medium mb-8 uppercase tracking-widest">Authorized Access Only</p>
+        
+        <form onSubmit={handleAuth} className="space-y-4">
+          <input 
+            type="email" placeholder="Professional Email" 
+            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+            value={email} onChange={e => setEmail(e.target.value)} required
+          />
+          <input 
+            type="password" placeholder="Password" 
+            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-600 outline-none transition-all"
+            value={password} onChange={e => setPassword(e.target.value)} required
+          />
+          <button className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all">
+            {authMode === 'signin' ? 'Sign In' : 'Create Account'}
+          </button>
+        </form>
+
+        <div className="mt-8 flex flex-col gap-3">
+          <button 
+            onClick={() => setAuthMode(authMode === 'signin' ? 'register' : 'signin')}
+            className="text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-blue-600"
+          >
+            {authMode === 'signin' ? 'Need an account? Register' : 'Already have an account? Sign In'}
+          </button>
+          <button onClick={() => setStep('share')} className="flex items-center justify-center gap-2 text-xs font-bold text-blue-600 uppercase tracking-widest pt-4 border-t border-slate-100">
+            <Share2 size={14} /> Invite a Colleague
+          </button>
+        </div>
+      </div>
     </div>
   );
 
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-indigo-100">
-      {/* GLOBAL HEADER */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
-            <ShieldCheck className="text-white w-6 h-6" />
-          </div>
+  const StepDistrict = () => (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="max-w-xl w-full bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100">
+        <h3 className="text-2xl font-black text-slate-900 mb-2">Step 3: District Profile</h3>
+        <p className="text-slate-500 mb-8 font-medium">Configure your district's physical assets for mandate tracking.</p>
+        
+        <div className="space-y-6">
           <div>
-            <h1 className="text-sm font-black uppercase tracking-tighter text-slate-900 leading-none">NYS Compliance Pro</h1>
-            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">{district?.name || 'Authorized Access Only'}</p>
+            <label className="block text-[10px] font-black uppercase text-slate-400 mb-2">District Name</label>
+            <input 
+              value={districtName} onChange={e => setDistrictName(e.target.value)}
+              className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-blue-600"
+              placeholder="e.g. Albany City School District"
+            />
           </div>
-        </div>
-        <div className="flex items-center gap-4">
-          {isAdmin && <button onClick={() => setStep('admin')} className="text-xs font-bold px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200">Admin Control</button>}
-          {user && !user.isAnonymous && (
-            <button onClick={() => signOut(auth)} className="text-[10px] font-black uppercase text-slate-400 hover:text-red-600 transition">Log Out</button>
-          )}
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto p-6">
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center justify-between text-red-700 text-sm font-bold animate-in slide-in-from-top">
-            <div className="flex items-center gap-3"><AlertCircle className="w-5 h-5" /> {error}</div>
-            <button onClick={() => setError(null)}>×</button>
-          </div>
-        )}
-
-        {step === 'auth' && <AuthView onAction={handleAuthAction} onShare={handleShare} />}
-        {step === 'setup' && <DistrictSetup onComplete={finalizeSetup} />}
-        {step === 'selection' && (
-          <TaskSelection 
-            userTasks={userTasks} 
-            district={district}
-            onToggle={toggleTaskSelection} 
-            onFinish={() => setStep('dashboard')} 
-            onBack={() => setStep('setup')}
-          />
-        )}
-        {step === 'dashboard' && (
-          <Dashboard 
-            district={district} 
-            tasks={userTasks} 
-            onUpdate={updateTask} 
-            onEditDistrict={() => setStep('setup')}
-            onAddTasks={() => setStep('selection')}
-          />
-        )}
-        {step === 'admin' && <AdminPanel onBack={() => setStep('dashboard')} />}
-      </main>
-
-      <footer className="mt-20 border-t border-slate-200 p-8 text-center">
-        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
-          <Lock className="w-3 h-3" /> Secure Regulatory Environment • System ID: {appId.toUpperCase()}
-        </p>
-      </footer>
-    </div>
-  );
-}
-
-// --- SUB-COMPONENTS ---
-
-function AuthView({ onAction, onShare }) {
-  const [mode, setMode] = useState('login'); // login, signup, share
-  const [email, setEmail] = useState('');
-  const [pass, setPass] = useState('');
-  const [shareEmail, setShareEmail] = useState('');
-
-  return (
-    <div className="max-w-md mx-auto py-12">
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 p-10 shadow-xl shadow-slate-200/50">
-        <h2 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">
-          {mode === 'login' ? 'Welcome Back' : mode === 'signup' ? 'Create Agency ID' : 'Invite Colleague'}
-        </h2>
-        <p className="text-slate-500 mb-8 font-medium">
-          {mode === 'share' ? 'Empower your district team with real-time compliance oversight.' : 'Access the statewide regulatory reporting network for public school systems.'}
-        </p>
-
-        {mode !== 'share' ? (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 mb-2 ml-1">Official Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-slate-50 border-0 p-4 rounded-2xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none transition-all" />
+          
+          <div>
+            <label className="block text-[10px] font-black uppercase text-slate-400 mb-2">Buildings / Locations</label>
+            <div className="flex gap-2 mb-4">
+              <input 
+                value={newBuilding} onChange={e => setNewBuilding(e.target.value)}
+                className="flex-1 p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none"
+                placeholder="Building Name"
+              />
+              <button 
+                onClick={() => { if(newBuilding) { setBuildings([...buildings, newBuilding]); setNewBuilding(''); } }}
+                className="bg-slate-900 text-white px-6 rounded-2xl font-bold"
+              >
+                Add
+              </button>
             </div>
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 mb-2 ml-1">Security Key</label>
-              <input type="password" value={pass} onChange={e => setPass(e.target.value)} className="w-full bg-slate-50 border-0 p-4 rounded-2xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none transition-all" />
-            </div>
-            <button onClick={() => onAction(mode, email, pass)} className="w-full bg-indigo-600 text-white p-5 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all">
-              {mode === 'login' ? 'Enter Portal' : 'Register District'}
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <input type="email" placeholder="colleague@district.org" value={shareEmail} onChange={e => setShareEmail(e.target.value)} className="w-full bg-slate-50 border-0 p-4 rounded-2xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none" />
-            <button onClick={() => onShare(shareEmail)} className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2">
-              <Share2 className="w-4 h-4" /> Send Invitation
-            </button>
-          </div>
-        )}
-
-        <div className="mt-8 pt-8 border-t border-slate-100 flex flex-col gap-3 items-center">
-          <button onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-xs font-bold text-slate-400 hover:text-indigo-600">
-            {mode === 'login' ? "New District? Register Agency" : "Already Registered? Sign In"}
-          </button>
-          <button onClick={() => setMode(mode === 'share' ? 'login' : 'share')} className="text-xs font-bold text-indigo-600 flex items-center gap-2">
-            <UserPlus className="w-4 h-4" /> {mode === 'share' ? "Back to Login" : "Share Portal Access"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DistrictSetup({ onComplete }) {
-  const [name, setName] = useState('');
-  const [buildings, setBuildings] = useState([]);
-  const [newB, setNewB] = useState('');
-
-  return (
-    <div className="max-w-2xl mx-auto py-10">
-      <div className="text-center mb-10">
-        <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-[10px] font-black uppercase tracking-widest">Step 3 of 6</span>
-        <h2 className="text-4xl font-black text-slate-900 mt-4 tracking-tight">Identity & Infrastructure</h2>
-        <p className="text-slate-500 font-medium">Establish your legal entity and physical asset inventory.</p>
-      </div>
-
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 p-10 space-y-8 shadow-sm">
-        <div>
-          <label className="block text-[10px] font-black uppercase text-slate-400 mb-3 tracking-widest">School District / Agency Name</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Buffalo City School District" className="w-full bg-slate-50 border-0 p-5 rounded-2xl font-bold text-xl ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none transition-all" />
-        </div>
-
-        <div>
-          <label className="block text-[10px] font-black uppercase text-slate-400 mb-3 tracking-widest">Building Inventory</label>
-          <div className="flex gap-2 mb-4">
-            <input value={newB} onChange={e => setNewB(e.target.value)} placeholder="Building Name (e.g. Riverside High)" className="flex-1 bg-slate-50 border-0 p-4 rounded-2xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none" />
-            <button onClick={() => { if(newB){ setBuildings([...buildings, newB]); setNewB(''); }}} className="bg-slate-900 text-white px-6 rounded-2xl hover:bg-black transition"><Plus /></button>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {buildings.map((b, i) => (
-              <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200 font-bold text-sm">
-                {b}
-                <button onClick={() => setBuildings(buildings.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <button 
-          disabled={!name || buildings.length === 0}
-          onClick={() => onComplete(name, buildings)} 
-          className="w-full bg-indigo-600 text-white p-6 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-indigo-700 disabled:opacity-30 flex items-center justify-center gap-3 transition-all"
-        >
-          Initialize Compliance Matrix <ChevronRight className="w-5 h-5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TaskSelection({ userTasks, district, onToggle, onFinish, onBack }) {
-  const [selectedBuildings, setSelectedBuildings] = useState({});
-
-  return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Step 4: Master Mandate Registry</h2>
-          <p className="text-slate-500 font-medium">Select applicable requirements and assign to physical locations.</p>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={onBack} className="px-6 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-600 hover:bg-slate-50">Back to Assets</button>
-          <button onClick={onFinish} className="px-8 py-4 bg-indigo-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-indigo-200 hover:bg-indigo-700">Confirm & Launch Dashboard</button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {MASTER_TASKS.map((m, i) => {
-          const activeTask = userTasks.find(t => t.task === m.task);
-          const isSelected = !!activeTask;
-
-          return (
-            <div key={i} className={`p-6 rounded-[2rem] border-2 transition-all group ${isSelected ? 'bg-white border-indigo-600 shadow-xl shadow-indigo-100/50' : 'bg-white border-slate-100 hover:border-slate-200'}`}>
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                    {isSelected ? <CheckCircle2 className="w-6 h-6" /> : <ClipboardCheck className="w-6 h-6" />}
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600">{m.category}</span>
-                    <h3 className="font-black text-lg text-slate-900 leading-tight">{m.task}</h3>
-                  </div>
+            <div className="flex flex-wrap gap-2">
+              {buildings.map((b, i) => (
+                <div key={i} className="flex items-center gap-2 bg-blue-50 text-blue-700 px-4 py-2 rounded-xl text-xs font-bold">
+                  {b} <button onClick={() => setBuildings(buildings.filter((_, idx) => idx !== i))}><Trash2 size={12}/></button>
                 </div>
-                <button 
-                  onClick={() => onToggle(m, selectedBuildings[m.task] || district.buildings)}
-                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isSelected ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-slate-900 text-white hover:bg-black'}`}
-                >
-                  {isSelected ? 'Remove' : 'Select Task'}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-y-4 gap-x-8 mb-6 text-[11px]">
-                <div><p className="text-slate-400 font-bold uppercase mb-1">Subcategory</p><p className="font-bold">{m.subcategory}</p></div>
-                <div><p className="text-slate-400 font-bold uppercase mb-1">Frequency</p><p className="font-bold">{m.frequency}</p></div>
-                <div><p className="text-slate-400 font-bold uppercase mb-1">Regulatory Authority</p><p className="font-bold">{m.authority}</p></div>
-                <div><p className="text-slate-400 font-bold uppercase mb-1">Action Required</p><p className="font-bold">{m.action}</p></div>
-                <div><p className="text-slate-400 font-bold uppercase mb-1">Performed By</p><p className="font-bold">{m.performedBy}</p></div>
-                <div>
-                  <p className="text-slate-400 font-bold uppercase mb-1">Legal Citation</p>
-                  <a href={m.citationUrl} target="_blank" className="text-indigo-600 font-bold flex items-center gap-1 hover:underline">
-                    {m.citation} <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              </div>
-
-              {isSelected && (
-                <div className="pt-4 border-t border-slate-100">
-                  <p className="text-[10px] font-black uppercase text-slate-400 mb-3 tracking-widest">Assigned Buildings</p>
-                  <div className="flex flex-wrap gap-2">
-                    {district.buildings.map(b => {
-                      const isBActive = activeTask.appliedBuildings?.includes(b);
-                      return (
-                        <button 
-                          key={b}
-                          onClick={() => {
-                            const current = activeTask.appliedBuildings || [];
-                            const next = current.includes(b) ? current.filter(x => x !== b) : [...current, b];
-                            onToggle(m, next); // Re-set with new building list
-                          }}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${isBActive ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
-                        >
-                          {b}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({ district, tasks, onUpdate, onEditDistrict, onAddTasks }) {
-  const [selectedTask, setSelectedTask] = useState(null);
-
-  const stats = useMemo(() => ({
-    total: tasks.length,
-    overdue: tasks.filter(t => t.status === 'Overdue').length,
-    soon: tasks.filter(t => t.status === 'Due Soon').length,
-    compliant: tasks.filter(t => t.status === 'Compliant').length,
-  }), [tasks]);
-
-  return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      {/* STATS BAR */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard label="Total Mandates" value={stats.total} icon={ClipboardCheck} color="indigo" />
-        <StatCard label="Overdue" value={stats.overdue} icon={AlertCircle} color="red" />
-        <StatCard label="Due 30 Days" value={stats.soon} icon={Bell} color="amber" />
-        <StatCard label="Compliant" value={stats.compliant} icon={CheckCircle2} color="emerald" />
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Active Matrix</h2>
-          <p className="text-slate-500 text-sm font-medium">Real-time status of NYS mandated safety requirements.</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={onEditDistrict} className="p-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition shadow-sm"><Settings className="w-5 h-5 text-slate-500" /></button>
-          <button onClick={onAddTasks} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-black transition shadow-sm flex items-center gap-2">
-            <Plus className="w-4 h-4" /> Add Custom Task
-          </button>
-        </div>
-      </div>
-
-      {/* MATRIX TABLE */}
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-200">
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Mandate Details</th>
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Applied Locations</th>
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Last Event</th>
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Next Due</th>
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Status</th>
-                <th className="px-6 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {tasks.map(t => (
-                <tr key={t.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                        t.status === 'Overdue' ? 'bg-red-100 text-red-600' : 
-                        t.status === 'Due Soon' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'
-                      }`}>
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="font-black text-sm text-slate-900">{t.task}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.authority} • {t.citation}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex flex-wrap gap-1 max-w-[200px]">
-                      {t.appliedBuildings?.map(b => (
-                        <span key={b} className="px-2 py-0.5 bg-slate-100 text-[10px] font-bold text-slate-600 rounded-md whitespace-nowrap">{b}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-5 text-center">
-                    <input 
-                      type="date" 
-                      value={t.lastCompleted || ''} 
-                      onChange={(e) => {
-                        const next = calculateNextDue(e.target.value, t.frequency);
-                        onUpdate(t.id, { 
-                          lastCompleted: e.target.value, 
-                          nextDue: next,
-                          status: getStatus(next)
-                        });
-                      }}
-                      className="bg-transparent border-0 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-600 rounded-md p-1 outline-none" 
-                    />
-                  </td>
-                  <td className="px-6 py-5 text-center">
-                    <span className={`text-xs font-black ${t.status === 'Overdue' ? 'text-red-600' : 'text-slate-900'}`}>
-                      {t.nextDue || '--'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-5 text-center">
-                    <StatusBadge status={t.status} />
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => setSelectedTask(t)} className="p-2 text-slate-400 hover:text-indigo-600 transition">
-                        <Info className="w-5 h-5" />
-                      </button>
-                      <button className="p-2 text-slate-400 hover:text-indigo-600 transition">
-                        <Plus className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
               ))}
-            </tbody>
-          </table>
-          {tasks.length === 0 && (
-            <div className="p-20 text-center">
-              <div className="w-16 h-16 bg-slate-100 rounded-3xl flex items-center justify-center mx-auto mb-4 text-slate-400">
-                <Database className="w-8 h-8" />
-              </div>
-              <h3 className="font-black text-slate-900">No Active Mandates</h3>
-              <p className="text-slate-500 text-sm max-w-xs mx-auto">Click "Add Tasks" to select requirements from the Master Registry.</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* TASK MODAL */}
-      {selectedTask && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setSelectedTask(null)}>
-          <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl p-10 relative overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="absolute top-0 right-0 p-8">
-              <button onClick={() => setSelectedTask(null)} className="text-slate-300 hover:text-slate-900 transition"><Plus className="w-8 h-8 rotate-45" /></button>
-            </div>
-            
-            <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-[10px] font-black uppercase tracking-widest">{selectedTask.category}</span>
-            <h2 className="text-3xl font-black text-slate-900 mt-2 mb-6 tracking-tight">{selectedTask.task}</h2>
-
-            <div className="grid grid-cols-2 gap-8 mb-10">
-              <DetailBox label="Subcategory" value={selectedTask.subcategory} />
-              <DetailBox label="Authority" value={selectedTask.authority} />
-              <DetailBox label="Frequency" value={selectedTask.frequency} />
-              <DetailBox label="Legal Citation" value={selectedTask.citation} link={selectedTask.citationUrl} />
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Documentation & Evidence</p>
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center hover:border-indigo-600 transition-all cursor-pointer group">
-                <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:bg-indigo-50 transition-colors">
-                  <Plus className="w-6 h-6 text-slate-400 group-hover:text-indigo-600" />
-                </div>
-                <p className="text-sm font-bold text-slate-600">Click to upload inspection reports or evidence photos</p>
-                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG (Max 10MB per file)</p>
-              </div>
             </div>
           </div>
+
+          <button 
+            disabled={!districtName || buildings.length === 0}
+            onClick={handleSetupDistrict}
+            className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black uppercase text-xs tracking-[0.2em] shadow-lg disabled:opacity-30 hover:bg-blue-700 transition-all flex items-center justify-center gap-3"
+          >
+            Define Assets <ChevronRight size={18} />
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
-}
 
-function AdminPanel({ onBack }) {
-  const [newReq, setNewReq] = useState({
-    category: '', subcategory: '', task: '', location: '', frequency: '',
-    authority: '', action: '', performedBy: '', citation: '', citationUrl: ''
-  });
-
-  const handlePush = async () => {
-    // Logic to add to a hypothetical master collection
-    alert("Requirement Pushed to All Users Statewide");
-    setNewReq({ category: '', subcategory: '', task: '', location: '', frequency: '', authority: '', action: '', performedBy: '', citation: '', citationUrl: '' });
-  };
-
-  return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">NYSED Statewide Command</h2>
-          <p className="text-slate-500 font-medium">Global Requirement Management & PUSH updates.</p>
-        </div>
-        <button onClick={onBack} className="px-6 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm">Return to District</button>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm">
-          <h3 className="font-black text-lg text-slate-900 mb-6">Issue New Mandate</h3>
-          <div className="space-y-4">
-            {Object.keys(newReq).map(key => (
-              <div key={key}>
-                <label className="text-[10px] font-black uppercase text-slate-400 mb-1 block capitalize">{key.replace('Url', ' URL')}</label>
-                <input 
-                  value={newReq[key]} 
-                  onChange={e => setNewReq({...newReq, [key]: e.target.value})}
-                  className="w-full bg-slate-50 border-0 p-3 rounded-xl font-bold text-sm ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none" 
-                />
-              </div>
-            ))}
-            <button onClick={handlePush} className="w-full bg-amber-600 text-white p-5 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-amber-700 shadow-lg shadow-amber-100 transition-all mt-4">
-              Push Mandate Statewide
+  const StepSelection = () => {
+    const [selected, setSelected] = useState([]);
+    return (
+      <div className="min-h-screen bg-slate-50 p-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <button onClick={() => setStep('district')} className="flex items-center gap-2 text-xs font-black uppercase text-slate-400 hover:text-slate-900">
+              <ChevronLeft size={16} /> Back
+            </button>
+            <h3 className="text-2xl font-black text-slate-900">Step 4: Compliance Selection</h3>
+            <button 
+              onClick={() => initializeTasks(selected)}
+              className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg"
+            >
+              Generate Task Matrix
             </button>
           </div>
-        </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          <h3 className="font-black text-lg text-slate-900">Current Master Registry</h3>
-          <div className="bg-white border border-slate-200 rounded-[2.5rem] overflow-hidden shadow-sm">
-            <table className="w-full text-left text-xs font-bold">
+          <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden">
+            <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="px-6 py-4">Task</th>
-                  <th className="px-6 py-4">Authority</th>
-                  <th className="px-6 py-4">Frequency</th>
-                  <th className="px-6 py-4 text-right">Status</th>
+                  <th className="px-6 py-4 font-black uppercase text-[10px] text-slate-400">Select</th>
+                  <th className="px-6 py-4 font-black uppercase text-[10px] text-slate-400">Category</th>
+                  <th className="px-6 py-4 font-black uppercase text-[10px] text-slate-400">Task</th>
+                  <th className="px-6 py-4 font-black uppercase text-[10px] text-slate-400">Authority</th>
+                  <th className="px-6 py-4 font-black uppercase text-[10px] text-slate-400">Citation</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {MASTER_TASKS.map((m, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 text-slate-900">{m.task}</td>
-                    <td className="px-6 py-4 text-slate-400">{m.authority}</td>
-                    <td className="px-6 py-4 text-slate-400">{m.frequency}</td>
-                    <td className="px-6 py-4 text-right text-emerald-600">Active</td>
+                {PRELOADED_TASKS.map((t, i) => (
+                  <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-6 py-4 text-center">
+                      <input 
+                        type="checkbox" className="w-5 h-5 accent-blue-600"
+                        onChange={e => e.target.checked ? setSelected([...selected, i]) : setSelected(selected.filter(x => x !== i))}
+                      />
+                    </td>
+                    <td className="px-6 py-4 font-bold text-slate-600">{t.category}</td>
+                    <td className="px-6 py-4 font-black text-slate-900">{t.task}</td>
+                    <td className="px-6 py-4 font-bold text-slate-500">{t.authority}</td>
+                    <td className="px-6 py-4">
+                      <a href={t.citationUrl} target="_blank" className="text-blue-600 font-bold flex items-center gap-1 hover:underline">
+                        {t.citation} <ExternalLink size={12} />
+                      </a>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -655,59 +310,163 @@ function AdminPanel({ onBack }) {
           </div>
         </div>
       </div>
+    );
+  };
+
+  const Dashboard = () => (
+    <div className="min-h-screen bg-[#F8FAFC]">
+      <nav className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-md">
+            <ShieldCheck size={20} />
+          </div>
+          <div>
+            <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight">{profile?.districtName}</h1>
+            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">NYS Compliance Matrix</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-6">
+          <button onClick={() => setStep('share')} className="text-[10px] font-black uppercase text-slate-400 flex items-center gap-2 hover:text-blue-600">
+            <Share2 size={14} /> Share
+          </button>
+          <div className="h-8 w-[1px] bg-slate-200"></div>
+          <button onClick={() => signOut(auth)} className="text-[10px] font-black uppercase text-red-400 hover:text-red-600">Sign Out</button>
+        </div>
+      </nav>
+
+      <div className="p-8 max-w-[1600px] mx-auto">
+        {/* Stats Header */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+          <StatCard icon={<Building2 className="text-blue-600" />} label="District Buildings" value={profile?.buildings?.length || 0} />
+          <StatCard icon={<CheckCircle2 className="text-emerald-600" />} label="Compliant" value={tasks.filter(t => t.status === 'Compliant').length} />
+          <StatCard icon={<AlertCircle className="text-amber-600" />} label="Due Soon" value={tasks.filter(t => t.status === 'Due Soon').length} />
+          <StatCard icon={<AlertCircle className="text-red-600" />} label="Overdue" value={tasks.filter(t => t.status === 'Overdue').length} />
+        </div>
+
+        {/* Task Matrix */}
+        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <h4 className="font-black text-slate-800 uppercase tracking-widest text-xs">Master Mandate Tracking</h4>
+            <div className="flex gap-4">
+               <button className="text-[10px] font-black uppercase text-slate-400 border border-slate-200 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 transition">Export Audit Report</button>
+               <button onClick={() => setStep('selection')} className="text-[10px] font-black uppercase text-blue-600 border border-blue-100 px-4 py-2 rounded-xl bg-blue-50/50 hover:bg-blue-50 transition">Add Tasks</button>
+            </div>
+          </div>
+          <table className="w-full text-left">
+            <thead className="bg-white border-b border-slate-100">
+              <tr>
+                <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Building & Requirement</th>
+                <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Frequency</th>
+                <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Last Completion</th>
+                <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Next Due</th>
+                <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {tasks.map(task => (
+                <tr key={task.id} className="hover:bg-slate-50/50 group transition-all">
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-4">
+                      <div className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-1 rounded-md uppercase min-w-[80px] text-center">
+                        {task.building}
+                      </div>
+                      <div>
+                        <p className="font-black text-slate-900">{task.task}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          {task.citation} • <a href={task.citationUrl} target="_blank" className="text-blue-500 hover:underline inline-flex items-center gap-0.5">Law <ExternalLink size={8}/></a>
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6 text-xs font-bold text-slate-600 uppercase">{task.frequency}</td>
+                  <td className="px-8 py-6">
+                    <input 
+                      type="date"
+                      value={task.lastCompleted || ''}
+                      onChange={(e) => updateTaskStatus(task.id, e.target.value)}
+                      className="bg-white border border-slate-200 p-2 rounded-lg text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                  </td>
+                  <td className="px-8 py-6">
+                    <p className={`text-xs font-black ${task.status === 'Overdue' ? 'text-red-600' : 'text-slate-900'}`}>
+                      {task.nextDue || '--'}
+                    </p>
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    <div className="flex flex-col items-end gap-2">
+                      <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest ${
+                        task.status === 'Overdue' ? 'bg-red-100 text-red-700' :
+                        task.status === 'Due Soon' ? 'bg-amber-100 text-amber-700' :
+                        task.status === 'Compliant' ? 'bg-emerald-100 text-emerald-700' :
+                        'bg-slate-100 text-slate-400'
+                      }`}>
+                        {task.status || 'Pending'}
+                      </span>
+                      <button className="text-[9px] font-bold text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 uppercase">
+                        <Download size={10} /> Docs
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
+
+  const StepShare = () => (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 text-center">
+      <div className="max-w-md w-full bg-white p-12 rounded-[3rem] shadow-xl border border-slate-100">
+        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
+          <Share2 size={32} />
+        </div>
+        <h3 className="text-2xl font-black text-slate-900 mb-2">Share Matrix</h3>
+        <p className="text-slate-500 mb-8 font-medium">Invite a colleague to collaboratively manage your district's compliance tasks.</p>
+        <input 
+          placeholder="colleague@school.edu" 
+          value={shareEmail} onChange={e => setShareEmail(e.target.value)}
+          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold mb-4 outline-none"
+        />
+        <button 
+          onClick={() => { alert('Invitation Sent to ' + shareEmail); setStep('dashboard'); }}
+          className="w-full bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-blue-700"
+        >
+          Send Invite Link
+        </button>
+        <button onClick={() => setStep('dashboard')} className="mt-4 text-xs font-black text-slate-400 uppercase tracking-widest">Cancel</button>
+      </div>
+    </div>
+  );
+
+  if (loading) return (
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-50">
+      <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Statewide Sync Initializing...</p>
+    </div>
+  );
+
+  switch (step) {
+    case 'auth': return <StepAuth />;
+    case 'district': return <StepDistrict />;
+    case 'selection': return <StepSelection />;
+    case 'dashboard': return <Dashboard />;
+    case 'share': return <StepShare />;
+    default: return <StepAuth />;
+  }
 }
 
-// --- ATOMS ---
-
-function StatCard({ label, value, icon: Icon, color }) {
-  const styles = {
-    indigo: 'bg-indigo-600 shadow-indigo-200',
-    red: 'bg-red-500 shadow-red-200',
-    amber: 'bg-amber-500 shadow-amber-200',
-    emerald: 'bg-emerald-500 shadow-emerald-200'
-  }[color];
-
+function StatCard({ icon, label, value }) {
   return (
-    <div className="bg-white border border-slate-200 p-6 rounded-[2rem] shadow-sm flex items-center gap-6">
-      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white ${styles} shadow-lg`}>
-        <Icon className="w-7 h-7" />
+    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-6">
+      <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-2xl">
+        {icon}
       </div>
       <div>
-        <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1">{label}</p>
-        <p className="text-3xl font-black text-slate-900 leading-tight">{value}</p>
+        <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">{label}</p>
+        <p className="text-2xl font-black text-slate-900 tracking-tighter">{value}</p>
       </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    'Compliant': 'bg-emerald-100 text-emerald-700',
-    'Due Soon': 'bg-amber-100 text-amber-700',
-    'Overdue': 'bg-red-100 text-red-700',
-    'Pending': 'bg-slate-100 text-slate-500'
-  }[status];
-
-  return (
-    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${styles}`}>
-      {status}
-    </span>
-  );
-}
-
-function DetailBox({ label, value, link }) {
-  return (
-    <div>
-      <p className="text-[10px] font-black uppercase text-slate-400 mb-2 tracking-widest">{label}</p>
-      {link ? (
-        <a href={link} target="_blank" className="text-lg font-black text-indigo-600 hover:underline flex items-center gap-2">
-          {value} <ExternalLink className="w-4 h-4" />
-        </a>
-      ) : (
-        <p className="text-lg font-black text-slate-900">{value || '--'}</p>
-      )}
     </div>
   );
 }
