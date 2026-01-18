@@ -82,38 +82,41 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
-    // Path for District Doc (Even Segments)
-    const districtDocRef = doc(db, 'artifacts', appId, 'public', 'data', `district_${user.uid}`);
+    // Path for District Doc: Fixed to have even segments (6 segments)
+    // /artifacts/{appId}/public/data/districts/{userId}
+    const districtDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'districts', user.uid);
     
     const unsubDistrict = onSnapshot(districtDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         const sanitized = {
-          name: String(data.name || ''),
+          name: typeof data.name === 'string' ? data.name : '',
           buildings: Array.isArray(data.buildings) ? data.buildings.map(b => String(b)) : []
         };
         setDistrictData(sanitized);
-        // Only update input states if user hasn't started typing yet
+        // Update input states if user hasn't started typing yet or if view is dashboard
         setDistrictNameInput(prev => prev || sanitized.name);
-        setBuildingsInput(prev => prev.length ? prev : sanitized.buildings);
+        setBuildingsInput(prev => (prev.length === 0 ? sanitized.buildings : prev));
         
         if (view === 'landing') setView('dashboard');
       }
     }, (err) => setError(`Sync Error (District): ${err.message}`));
 
-    // Path for Tasks Collection (Odd Segments)
+    // Path for Tasks Collection
     const tasksColl = collection(db, 'artifacts', appId, 'public', 'data', 'district_tasks');
     const tasksQuery = query(tasksColl, where('userId', '==', user.uid));
     
     const unsubTasks = onSnapshot(tasksQuery, (snap) => {
-      const ts = snap.docs.map(d => ({ 
-        id: d.id, 
-        ...d.data(),
-        // Safeguard for React Rendering (ensure no nested objects where strings expected)
-        task: String(d.data().task || ''),
-        freq: String(d.data().freq || ''),
-        auth: String(d.data().auth || '')
-      }));
+      const ts = snap.docs.map(d => {
+        const data = d.data();
+        return { 
+          id: d.id, 
+          ...data,
+          task: typeof data.task === 'string' ? data.task : String(data.task || ''),
+          freq: typeof data.freq === 'string' ? data.freq : String(data.freq || ''),
+          auth: typeof data.auth === 'string' ? data.auth : String(data.auth || '')
+        };
+      });
       setUserTasks(ts);
     }, (err) => setError(`Sync Error (Tasks): ${err.message}`));
 
@@ -123,7 +126,7 @@ export default function App() {
   const handleSaveDistrict = async () => {
     if (!districtNameInput || !user) return;
     try {
-      const districtDocRef = doc(db, 'artifacts', appId, 'public', 'data', `district_${user.uid}`);
+      const districtDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'districts', user.uid);
       await setDoc(districtDocRef, { 
         name: districtNameInput, 
         buildings: buildingsInput,
@@ -171,7 +174,7 @@ export default function App() {
   const calculateDueDate = (lastDate, frequency) => {
     if (!lastDate) return "N/A";
     const date = new Date(lastDate);
-    const freq = String(frequency).toLowerCase();
+    const freq = String(frequency || '').toLowerCase();
     if (freq.includes('annual')) date.setFullYear(date.getFullYear() + 1);
     else if (freq.includes('5 years')) date.setFullYear(date.getFullYear() + 5);
     else if (freq.includes('6 months')) date.setMonth(date.getMonth() + 6);
@@ -300,12 +303,12 @@ export default function App() {
                   >
                     <div className="flex justify-between items-start mb-3">
                       <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${isSelected ? 'bg-blue-200 text-blue-800' : 'bg-slate-100 text-slate-500'}`}>
-                        {task.cat}
+                        {String(task.cat)}
                       </span>
                       {isSelected ? <CheckCircle2 className="text-blue-600 shrink-0" size={20}/> : <Circle className="text-slate-200 shrink-0" size={20}/>}
                     </div>
-                    <h4 className="font-bold text-slate-800 mb-1 leading-snug">{task.task}</h4>
-                    <p className="text-xs text-slate-400 font-medium">{task.auth} • {task.freq}</p>
+                    <h4 className="font-bold text-slate-800 mb-1 leading-snug">{String(task.task)}</h4>
+                    <p className="text-xs text-slate-400 font-medium">{String(task.auth)} • {String(task.freq)}</p>
                   </div>
                 );
               })}
@@ -317,7 +320,7 @@ export default function App() {
           <div className="animate-in fade-in duration-500">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
               <div>
-                <h1 className="text-3xl font-black text-slate-900 leading-none mb-2">{districtData.name || "District"} Compliance</h1>
+                <h1 className="text-3xl font-black text-slate-900 leading-none mb-2">{String(districtData.name || "District")} Compliance</h1>
                 <div className="flex items-center gap-2 text-slate-400 text-sm font-medium">
                    <Building2 size={14}/> {districtData.buildings.length} Registered Buildings
                 </div>
@@ -343,7 +346,6 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {userTasks.map(task => {
-                      const isOverdue = !task.lastCompleted;
                       return (
                         <tr key={task.id} className="hover:bg-slate-50/50 transition">
                           <td className="px-6 py-5">
