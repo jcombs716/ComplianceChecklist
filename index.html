@@ -69,39 +69,58 @@ export default function App() {
   const [step, setStep] = useState('auth'); // auth, setup, tasks, dashboard
   const [error, setError] = useState(null);
 
+  // Authentication Setup
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth failed", err);
       }
     };
     initAuth();
-    return onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u) loadDistrictData(u.uid);
-      else setLoading(false);
+      if (!u) setLoading(false);
     });
+    return () => unsubscribe();
   }, []);
 
-  const loadDistrictData = async (uid) => {
-    const dRef = doc(db, 'artifacts', appId, 'public', 'data', 'districts', uid);
-    const dSnap = await getDoc(dRef);
-    if (dSnap.exists()) {
-      setDistrict(dSnap.data());
-      setStep('dashboard');
-    } else {
-      setStep('setup');
-    }
+  // Data Loading & Syncing
+  useEffect(() => {
+    if (!user) return;
 
+    // Load District Info
+    const loadDistrict = async () => {
+      const dRef = doc(db, 'artifacts', appId, 'public', 'data', 'districts', user.uid);
+      const dSnap = await getDoc(dRef);
+      if (dSnap.exists()) {
+        setDistrict(dSnap.data());
+        setStep('dashboard');
+      } else {
+        setStep('setup');
+      }
+    };
+
+    loadDistrict();
+
+    // Listen to User Tasks
     const tColl = collection(db, 'artifacts', appId, 'public', 'data', 'user_tasks');
-    const q = query(tColl, where('userId', '==', uid));
-    onSnapshot(q, (snap) => {
+    const q = query(tColl, where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snap) => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
+    }, (err) => {
+      console.error("Firestore error", err);
+      setLoading(false);
     });
-  };
+
+    return () => unsubscribe();
+  }, [user]);
 
   const handleCreateAccount = async (email, pass) => {
     try {
@@ -115,7 +134,6 @@ export default function App() {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, pass);
       setUser(cred.user);
-      loadDistrictData(cred.user.uid);
     } catch (e) { setError("Invalid credentials"); }
   };
 
@@ -133,6 +151,7 @@ export default function App() {
   };
 
   const toggleTaskSelection = async (masterTask) => {
+    if (!user) return;
     const existing = tasks.find(t => t.task === masterTask.task);
     if (existing) {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'user_tasks', existing.id));
@@ -142,13 +161,14 @@ export default function App() {
         userId: user.uid,
         lastCompleted: null,
         nextDue: null,
-        buildings: district.buildings, // Default to all
+        buildings: district?.buildings || [], 
         status: 'Pending'
       });
     }
   };
 
   const updateTaskCompletion = async (taskId, date) => {
+    if (!user) return;
     const task = tasks.find(t => t.id === taskId);
     const days = FREQUENCY_DAYS[task.frequency] || 365;
     const nextDue = new Date(date);
@@ -161,11 +181,14 @@ export default function App() {
     });
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-600" size={40} /></div>;
+  if (loading) return (
+    <div className="h-screen flex items-center justify-center bg-slate-50">
+      <Loader2 className="animate-spin text-indigo-600" size={40} />
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      {/* HEADER */}
       <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 p-2 rounded-lg text-white"><ShieldCheck size={20}/></div>
@@ -181,7 +204,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto p-6 lg:p-12">
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-700 text-sm font-bold animate-in fade-in zoom-in-95">
+          <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-700 text-sm font-bold">
             <AlertCircle size={18} /> {error}
             <button className="ml-auto" onClick={() => setError(null)}>&times;</button>
           </div>
@@ -189,11 +212,10 @@ export default function App() {
 
         {step === 'auth' && <AuthView onSignUp={handleCreateAccount} onSignIn={handleSignIn} />}
         {step === 'setup' && <DistrictSetup onSave={saveDistrict} initialData={district} />}
-        {step === 'tasks' && <TaskSelection tasks={tasks} onToggle={toggleTaskSelection} onContinue={() => setStep('dashboard')} onBack={() => setStep('setup')} />}
+        {step === 'tasks' && <TaskSelection userTasks={tasks} onToggle={toggleTaskSelection} onContinue={() => setStep('dashboard')} onBack={() => setStep('setup')} />}
         {step === 'dashboard' && <Dashboard district={district} tasks={tasks} onUpdate={updateTaskCompletion} onNavigateToLibrary={() => setStep('tasks')} onManageDistrict={() => setStep('setup')} />}
       </main>
 
-      {/* FOOTER */}
       <footer className="fixed bottom-0 w-full bg-white/80 backdrop-blur-md border-t border-slate-200 py-2 px-8 flex justify-between items-center text-[10px] font-mono text-slate-400">
         <span>ENCLAVE: {appId.toUpperCase()}</span>
         <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/> SYSTEM OPERATIONAL</span>
@@ -309,7 +331,7 @@ function DistrictSetup({ onSave, initialData }) {
   );
 }
 
-function TaskSelection({ tasks, onToggle, onContinue, onBack }) {
+function TaskSelection({ userTasks, onToggle, onContinue, onBack }) {
   return (
     <div className="animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-8">
@@ -325,7 +347,7 @@ function TaskSelection({ tasks, onToggle, onContinue, onBack }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {MASTER_TASKS.map((m, i) => {
-          const isSelected = tasks.some(t => t.task === m.task);
+          const isSelected = userTasks.some(t => t.task === m.task);
           return (
             <button 
               key={i}
@@ -376,8 +398,8 @@ function Dashboard({ district, tasks, onUpdate, onNavigateToLibrary, onManageDis
         <div className="bg-slate-900 rounded-[2rem] p-8 text-white flex flex-col justify-between">
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">District Overview</p>
           <div>
-            <h3 className="text-3xl font-black tracking-tight leading-none mb-2">{district?.name}</h3>
-            <p className="text-[10px] font-bold text-indigo-400 uppercase">{district?.buildings?.length} Registered Facilities</p>
+            <h3 className="text-3xl font-black tracking-tight leading-none mb-2">{district?.name || 'Loading...'}</h3>
+            <p className="text-[10px] font-bold text-indigo-400 uppercase">{district?.buildings?.length || 0} Registered Facilities</p>
           </div>
           <button onClick={onManageDistrict} className="mt-6 text-[10px] font-black uppercase bg-white/10 hover:bg-white/20 transition p-3 rounded-xl flex items-center justify-center gap-2">Manage Infrastructure <Settings size={14}/></button>
         </div>
@@ -414,7 +436,7 @@ function Dashboard({ district, tasks, onUpdate, onNavigateToLibrary, onManageDis
                   <td className="px-6 py-6">
                     <div className="flex flex-col gap-1">
                       <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-slate-100 text-slate-500 rounded inline-block w-max">{t.authority}</span>
-                      <a href={t.url} target="_blank" className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"><ExternalLink size={10}/> {t.citation}</a>
+                      <a href={t.url} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"><ExternalLink size={10}/> {t.citation}</a>
                     </div>
                   </td>
                   <td className="px-6 py-6">
@@ -472,7 +494,7 @@ function StatusBadge({ status }) {
     'Due Soon': 'bg-amber-100 text-amber-700',
     'Overdue': 'bg-red-100 text-red-700',
     'Pending': 'bg-slate-100 text-slate-500'
-  }[status];
+  }[status] || 'bg-slate-100 text-slate-500';
 
   return <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full ${styles}`}>{status}</span>;
 }
