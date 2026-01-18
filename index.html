@@ -1,150 +1,755 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NYS School Facilities Compliance Tracker</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
-        .table-container { overflow-x: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
-        tr:nth-child(even) { background-color: #f1f5f9; }
-        .badge { padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
-        .badge-annual { background-color: #dcfce7; color: #166534; }
-        .badge-periodic { background-color: #fef9c3; color: #854d0e; }
-        .badge-event { background-color: #fee2e2; color: #991b1b; }
-    </style>
-</head>
-<body class="p-4 md:p-8">
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold text-slate-900">NYS School District Compliance Matrix</h1>
-            <p class="text-slate-600 mt-2">Comprehensive tracking for Facilities, Fire Safety, Environmental, and Health & Safety requirements.</p>
-        </header>
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithCustomToken, 
+  signInAnonymously, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  onSnapshot, 
+  serverTimestamp, 
+  updateDoc, 
+  query, 
+  where,
+  addDoc,
+  arrayUnion,
+  arrayRemove
+} from 'firebase/firestore';
+import { 
+  ShieldCheck, 
+  Building2, 
+  LogOut, 
+  Search, 
+  CheckCircle2, 
+  AlertCircle, 
+  Plus, 
+  FileText, 
+  Calendar, 
+  ChevronRight, 
+  ChevronLeft, 
+  Share2, 
+  Users,
+  ExternalLink,
+  Trash2,
+  Clock
+} from 'lucide-react';
 
-        <div class="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <input type="text" id="searchInput" placeholder="Search tasks, agencies, or laws..." 
-                   class="p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
-            
-            <select id="categoryFilter" class="p-3 border border-slate-300 rounded-lg outline-none">
-                <option value="">All Categories</option>
-                <option value="Facilities">Facilities</option>
-                <option value="Fire Safety">Fire Safety</option>
-                <option value="Environmental">Environmental</option>
-                <option value="Health & Safety">Health & Safety</option>
-                <option value="Admin/Transportation">Admin/Transportation</option>
-            </select>
+// --- INITIALIZATION ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'nys-compliance-v1';
 
-            <div class="flex items-center justify-end text-sm text-slate-500">
-                <span id="rowCount">0</span> items found
+// --- DATA SOURCE: MASTER TASKS ---
+const MASTER_COMPLIANCE_TASKS = [
+  { id: 'm1', cat: "Facilities", sub: "Structural", task: "Visual Inspection", freq: "Annually", auth: "NYSED", action: "Inspection", by: "Team (incl. Code Official)", cite: "8 NYCRR § 155.4", link: "https://www.nysenate.gov/legislation/laws/EDN/807-A" },
+  { id: 'm2', cat: "Facilities", sub: "Structural", task: "Building Condition Survey (BCS)", freq: "Every 5 Years", auth: "NYSED", action: "Survey & Report", by: "Licensed Architect/PE", cite: "8 NYCRR § 155.4", link: "https://www.p12.nysed.gov/facplan/HealthSafety.html" },
+  { id: 'm3', cat: "Facilities", sub: "Planning", task: "5-Year Capital Facilities Plan", freq: "Annual Update", auth: "NYSED", action: "Review & Update", by: "BOE / Facilities Admin", cite: "8 NYCRR § 155.1", link: "https://www.nysenate.gov/legislation/laws/EDN/409" },
+  { id: 'm4', cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (High Pressure)", freq: "Annual", auth: "NYS Dept of Labor", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204", link: "https://dol.ny.gov/boiler-safety-inspection" },
+  { id: 'm5', cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (Low Pressure)", freq: "Every 2 Years", auth: "NYS Dept of Labor", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204", link: "https://dol.ny.gov/boiler-safety-inspection" },
+  { id: 'm6', cat: "Facilities", sub: "Mechanical", task: "Elevator / Chairlift Inspection", freq: "Every 6 Months", auth: "NYS Code Enforcement", action: "Inspection", by: "Licensed Inspector", cite: "PMCNYS § 606.1", link: "https://dos.ny.gov/building-standards-and-codes" },
+  { id: 'm7', cat: "Facilities", sub: "Water Systems", task: "Backflow Prevention Test", freq: "Annual", auth: "NYS DOH", action: "Testing", by: "Certified Tester", cite: "10 NYCRR § 5-1.31", link: "https://www.health.ny.gov/environmental/water/drinking/" },
+  { id: 'm8', cat: "Facilities", sub: "Equipment", task: "Gym Bleacher Inspection", freq: "Annual", auth: "NYS Fire Code", action: "Inspection", by: "Qualified Person", cite: "FCNYS § 1029.1.1", link: "https://codes.iccsafe.org/content/NYFC2020P1" },
+  { id: 'm9', cat: "Fire Safety", sub: "General", task: "Annual Fire Safety Inspection", freq: "Annually", auth: "NYSED / Fire Code", action: "Inspection", by: "Code Enforcement Official", cite: "Ed. Law § 807-A", link: "http://www.p12.nysed.gov/facplan/FireSafety.html" },
+  { id: 'm10', cat: "Fire Safety", sub: "Drills", task: "Fire Evacuation Drills", freq: "12x Year (8 by Dec 1)", auth: "NYSED", action: "Drill Execution", by: "Principal / In-House", cite: "Ed. Law § 807", link: "https://www.nysenate.gov/legislation/laws/EDN/807" },
+  { id: 'm11', cat: "Environmental", sub: "Water", task: "Lead in Water Testing", freq: "Every 3 Years", auth: "NYS DOH", action: "Sampling & Lab Test", by: "In-House / Lab", cite: "10 NYCRR § 67-4", link: "https://www.health.ny.gov/environmental/water/drinking/lead/lead_testing_schools.htm" },
+  { id: 'm12', cat: "Health & Safety", sub: "Training", task: "Right-To-Know Training", freq: "Annual", auth: "PESH / OSHA", action: "Staff Training", by: "In-House / Vendor", cite: "29 CFR § 1910.1200", link: "https://www.osha.gov/hazcom" },
+  { id: 'm13', cat: "Admin/Transportation", sub: "Planning", task: "School Safety Plan (SAVE)", freq: "Annual (by Sept 1)", auth: "NYSED", action: "Plan Update", by: "Safety Team / BOE", cite: "Ed. Law § 2801-A", link: "http://www.p12.nysed.gov/sss/ssae/schoolsafety/save/" }
+];
+
+// --- UTILS ---
+const calculateNextDue = (lastDate, frequency) => {
+  if (!lastDate) return null;
+  const date = new Date(lastDate);
+  const freq = frequency.toLowerCase();
+  
+  if (freq.includes('annual')) date.setFullYear(date.getFullYear() + 1);
+  else if (freq.includes('5 years')) date.setFullYear(date.getFullYear() + 5);
+  else if (freq.includes('3 years')) date.setFullYear(date.getFullYear() + 3);
+  else if (freq.includes('2 years')) date.setFullYear(date.getFullYear() + 2);
+  else if (freq.includes('6 months')) date.setMonth(date.getMonth() + 6);
+  else if (freq.includes('monthly')) date.setMonth(date.getMonth() + 1);
+  else if (freq.includes('weekly')) date.setDate(date.getDate() + 7);
+  else if (freq.includes('quarterly')) date.setMonth(date.getMonth() + 3);
+  else return null;
+
+  return date.toISOString().split('T')[0];
+};
+
+const getStatus = (dueDate) => {
+  if (!dueDate) return { label: 'Incomplete', color: 'bg-gray-100 text-gray-800' };
+  const today = new Date();
+  const due = new Date(dueDate);
+  const diffTime = due - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) return { label: 'Overdue', color: 'bg-red-100 text-red-800' };
+  if (diffDays <= 30) return { label: 'Due Soon', color: 'bg-amber-100 text-amber-800' };
+  return { label: 'Compliant', color: 'bg-emerald-100 text-emerald-800' };
+};
+
+// --- COMPONENTS ---
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [step, setStep] = useState(1); // 1: Auth, 2: District, 3: Task Select, 4: Dashboard, 5: Share, 6: Admin
+  const [districtData, setDistrictData] = useState(null);
+  const [masterTasks, setMasterTasks] = useState(MASTER_COMPLIANCE_TASKS);
+  const [error, setError] = useState("");
+
+  // Firebase Auth Initializer
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        }
+      } catch (err) {
+        console.error("Auth error", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+      if (u) setStep(2);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch District Data
+  useEffect(() => {
+    if (!user) return;
+    // We search for a district document where this user is a member
+    const q = query(
+      collection(db, 'artifacts', appId, 'public', 'data', 'districts'),
+      where('members', 'array-contains', user.uid)
+    );
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setDistrictData({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+        // If already has district data, skip to dashboard unless setting up
+        if (step === 2) setStep(4);
+      }
+    }, (err) => console.error("Firestore error", err));
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Handle Logout
+  const handleLogout = () => signOut(auth).then(() => { setStep(1); setDistrictData(null); });
+
+  if (loading) return <div className="h-screen flex items-center justify-center">Loading Compliance System...</div>;
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      {/* Navigation Header */}
+      {user && (
+        <nav className="bg-white border-b border-slate-200 px-6 py-3 flex justify-between items-center sticky top-0 z-50">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="text-blue-700 w-8 h-8" />
+            <div>
+              <h1 className="font-bold text-lg leading-tight">NYS Compliance Portal</h1>
+              {districtData && <span className="text-xs text-slate-500 uppercase tracking-wider">{districtData.name}</span>}
             </div>
-        </div>
+          </div>
+          <div className="flex gap-4 items-center">
+            {user.email === 'admin@nysed.gov' && (
+              <button onClick={() => setStep(6)} className="text-sm font-semibold text-blue-600 hover:text-blue-800">Admin Panel</button>
+            )}
+            <button onClick={() => setStep(5)} className="p-2 hover:bg-slate-100 rounded-full text-slate-600" title="Share App">
+              <Share2 size={20} />
+            </button>
+            <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-600 font-medium hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors">
+              <LogOut size={16} /> Logout
+            </button>
+          </div>
+        </nav>
+      )}
 
-        <div class="table-container bg-white">
-            <table class="w-full text-left border-collapse">
-                <thead class="bg-slate-800 text-white">
-                    <tr>
-                        <th class="p-4 font-semibold text-sm">Category / Sub</th>
-                        <th class="p-4 font-semibold text-sm">Task</th>
-                        <th class="p-4 font-semibold text-sm">Frequency</th>
-                        <th class="p-4 font-semibold text-sm">Authority</th>
-                        <th class="p-4 font-semibold text-sm">Action Required</th>
-                        <th class="p-4 font-semibold text-sm">Citation</th>
-                    </tr>
-                </thead>
-                <tbody id="complianceBody" class="text-slate-700 text-sm">
-                    <!-- Data injected via JS -->
-                </tbody>
-            </table>
-        </div>
+      <main className="max-w-7xl mx-auto p-6">
+        {step === 1 && <AuthPage setError={setError} error={error} />}
+        {step === 2 && <DistrictSetup user={user} setStep={setStep} districtData={districtData} />}
+        {step === 3 && <TaskSelection districtData={districtData} masterTasks={masterTasks} setStep={setStep} />}
+        {step === 4 && <Dashboard districtData={districtData} setStep={setStep} masterTasks={masterTasks} />}
+        {step === 5 && <SharePage setStep={setStep} />}
+        {step === 6 && <AdminPanel masterTasks={masterTasks} setStep={setStep} />}
+      </main>
     </div>
+  );
+}
 
-    <script>
-        const complianceData = [
-            { cat: "Facilities", sub: "Structural", task: "Visual Inspection", freq: "Annually", auth: "NYSED", action: "Inspection", by: "Team (incl. Code Official)", cite: "8 NYCRR § 155.4" },
-            { cat: "Facilities", sub: "Structural", task: "Building Condition Survey (BCS)", freq: "Every 5 Years", auth: "NYSED", action: "Survey & Report", by: "Licensed Architect/PE", cite: "8 NYCRR § 155.4" },
-            { cat: "Facilities", sub: "Planning", task: "5-Year Capital Facilities Plan", freq: "Annual Update", auth: "NYSED", action: "Review & Update", by: "BOE / Admin", cite: "8 NYCRR § 155.1" },
-            { cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (High Pressure)", freq: "Annual", auth: "NYS DOL", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204" },
-            { cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (Low Pressure)", freq: "Every 2 Years", auth: "NYS DOL", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204" },
-            { cat: "Facilities", sub: "Mechanical", task: "Elevator / Chairlift Inspection", freq: "Every 6 Months", auth: "NYS Code Enforcement", action: "Inspection", by: "Licensed Inspector", cite: "PMCNYS § 606.1" },
-            { cat: "Facilities", sub: "Water Systems", task: "Backflow Prevention Test", freq: "Annual", auth: "NYS DOH", action: "Testing", by: "Certified Tester", cite: "10 NYCRR § 5-1.31" },
-            { cat: "Facilities", sub: "Equipment", task: "Gym Bleacher Inspection", freq: "Annual", auth: "NYS Fire Code", action: "Inspection", by: "Qualified Person", cite: "FCNYS § 1029.1.1" },
-            { cat: "Facilities", sub: "Equipment", task: "Stage Rigging Inspection", freq: "Annual", auth: "OSHA", action: "Inspection", by: "Qualified Person", cite: "OSHA General Duty" },
-            { cat: "Facilities", sub: "Recreational", task: "Swimming Pool Permit", freq: "Annual", auth: "County DOH", action: "Permit Renewal", by: "County DOH", cite: "10 NYCRR § 6-1.4" },
-            { cat: "Fire Safety", sub: "General", task: "Annual Fire Safety Inspection", freq: "Annually", auth: "NYSED / Fire Code", action: "Inspection", by: "Code Official", cite: "Ed. Law § 807-A" },
-            { cat: "Fire Safety", sub: "Drills", task: "Fire Evacuation Drills", freq: "12x Year", auth: "NYSED", action: "Drill Execution", by: "Principal", cite: "Ed. Law § 807" },
-            { cat: "Fire Safety", sub: "Drills", task: "Lockdown Drills", freq: "4x Year", auth: "NYSED", action: "Drill Execution", by: "Principal", cite: "Ed. Law § 807" },
-            { cat: "Fire Safety", sub: "Systems", task: "Fire Alarm System Testing", freq: "Annual", auth: "NYS Fire Code", action: "Testing", by: "Licensed Contractor", cite: "FCNYS § 907.8" },
-            { cat: "Fire Safety", sub: "Systems", task: "Sprinkler System Testing", freq: "Annual", auth: "NYS Fire Code", action: "Testing", by: "Licensed Contractor", cite: "FCNYS § 903.5" },
-            { cat: "Fire Safety", sub: "Equipment", task: "Fire Extinguishers (Visual)", freq: "Monthly", auth: "NYS Fire Code", action: "Visual Check", by: "In-House", cite: "FCNYS § 906.2" },
-            { cat: "Fire Safety", sub: "Equipment", task: "Fire Extinguishers (Service)", freq: "Annual", auth: "NYS Fire Code", action: "Service & Tag", by: "Licensed Contractor", cite: "FCNYS § 906.2" },
-            { cat: "Fire Safety", sub: "Kitchen", task: "Range Hood Inspection", freq: "Every 6 Months", auth: "NYS Fire Code", action: "Inspection", by: "Licensed Contractor", cite: "FCNYS § 607.3.3" },
-            { cat: "Fire Safety", sub: "Lighting", task: "Emergency Lights (Function)", freq: "Monthly (30s)", auth: "NYS Fire Code", action: "Functional Test", by: "In-House", cite: "FCNYS § 604.5" },
-            { cat: "Fire Safety", sub: "Power", task: "Emergency Generator (Run)", freq: "Monthly", auth: "NYS Fire Code", action: "Load Test", by: "In-House", cite: "FCNYS § 604.3" },
-            { cat: "Environmental", sub: "Water", task: "Lead in Water Testing", freq: "Every 3 Years", auth: "NYS DOH", action: "Sampling & Lab", by: "In-House/Lab", cite: "10 NYCRR § 67-4" },
-            { cat: "Environmental", sub: "Asbestos", task: "Asbestos 6-Month Surveillance", freq: "Every 6 Months", auth: "EPA (AHERA)", action: "Visual Inspection", by: "Designee", cite: "40 CFR § 763.92" },
-            { cat: "Environmental", sub: "Asbestos", task: "Asbestos Re-Inspection", freq: "Every 3 Years", auth: "EPA (AHERA)", action: "Full Inspection", by: "Licensed Inspector", cite: "40 CFR § 763.85" },
-            { cat: "Environmental", sub: "Pest Mgmt", task: "Pesticide Notification (IPM)", freq: "48hr Prior", auth: "NYSED", action: "Notify Occupants", by: "In-House", cite: "Ed. Law § 409-H" },
-            { cat: "Environmental", sub: "Fuel Tanks", task: "Petroleum Tank Registration", freq: "Every 5 Years", auth: "NYS DEC", action: "Submit Renewal", by: "In-House", cite: "6 NYCRR § 613-1" },
-            { cat: "Environmental", sub: "Chemical", task: "Chemical Inventory", freq: "Annual", auth: "OSHA", action: "Inventory Audit", by: "CHO", cite: "29 CFR § 1910.1450" },
-            { cat: "Health & Safety", sub: "Training", task: "Right-To-Know Training", freq: "Annual", auth: "PESH/OSHA", action: "Staff Training", by: "In-House/Vendor", cite: "29 CFR § 1910.1200" },
-            { cat: "Health & Safety", sub: "Training", task: "Bloodborne Pathogen", freq: "Annual", auth: "PESH/OSHA", action: "Staff Training", by: "In-House/Nurse", cite: "29 CFR § 1910.1030" },
-            { cat: "Health & Safety", sub: "Medical", task: "Eyewash Station", freq: "Weekly (Flush)", auth: "NYS Plumbing", action: "Activation Test", by: "In-House", cite: "PCNYS § 411" },
-            { cat: "Admin/Transportation", sub: "Planning", task: "School Safety Plan (SAVE)", freq: "Annual", auth: "NYSED", action: "Plan Update", by: "Safety Team/BOE", cite: "Ed. Law § 2801-A" },
-            { cat: "Admin/Transportation", sub: "Reporting", task: "Bus Accident Reporting", freq: "As Occurs", auth: "NYS DMV", action: "File Report", by: "Transportation", cite: "VTL § 600" },
-            { cat: "Admin/Transportation", sub: "Equipment", task: "AED Inspection", freq: "Monthly", auth: "NYSED", action: "Check Readiness", by: "Nurse/Vendor", cite: "Ed. Law § 917" }
-        ];
+// --- STEP 1: AUTHENTICATION ---
+function AuthPage({ setError, error }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-        const tbody = document.getElementById('complianceBody');
-        const searchInput = document.getElementById('searchInput');
-        const categoryFilter = document.getElementById('categoryFilter');
-        const rowCount = document.getElementById('rowCount');
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      if (isLogin) {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
-        function getFreqClass(freq) {
-            const f = freq.toLowerCase();
-            if (f.includes('annual') || f.includes('year')) return 'badge-annual';
-            if (f.includes('month') || f.includes('week')) return 'badge-periodic';
-            return 'badge-event';
-        }
+  return (
+    <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
+      <div className="text-center mb-8">
+        <div className="bg-blue-100 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <ShieldCheck className="text-blue-700 w-10 h-10" />
+        </div>
+        <h2 className="text-2xl font-bold">{isLogin ? "Sign In" : "Create Account"}</h2>
+        <p className="text-slate-500 text-sm mt-2">Access the NYS Public School Compliance Tracking System</p>
+      </div>
 
-        function renderTable() {
-            const searchTerm = searchInput.value.toLowerCase();
-            const categoryTerm = categoryFilter.value;
-            
-            let filtered = complianceData.filter(item => {
-                const matchesSearch = Object.values(item).some(val => val.toLowerCase().includes(searchTerm));
-                const matchesCategory = categoryTerm === "" || item.cat === categoryTerm;
-                return matchesSearch && matchesCategory;
-            });
+      <form onSubmit={handleAuth} className="space-y-4">
+        <div>
+          <label className="block text-sm font-semibold mb-1">Work Email</label>
+          <input 
+            type="email" required className="w-full p-3 border rounded-xl" 
+            value={email} onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-1">Password</label>
+          <input 
+            type="password" required className="w-full p-3 border rounded-xl" 
+            value={password} onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        {error && <p className="text-red-500 text-xs bg-red-50 p-2 rounded-lg">{error}</p>}
+        <button className="w-full bg-blue-700 text-white p-3 rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-lg shadow-blue-200">
+          {isLogin ? "Sign In" : "Register"}
+        </button>
+      </form>
 
-            tbody.innerHTML = filtered.map(item => `
-                <tr class="hover:bg-blue-50 transition-colors">
-                    <td class="p-4 border-b border-slate-200">
-                        <span class="block font-semibold text-blue-800">${item.cat}</span>
-                        <span class="text-xs text-slate-500">${item.sub}</span>
-                    </td>
-                    <td class="p-4 border-b border-slate-200 font-medium">${item.task}</td>
-                    <td class="p-4 border-b border-slate-200">
-                        <span class="badge ${getFreqClass(item.freq)}">${item.freq}</span>
-                    </td>
-                    <td class="p-4 border-b border-slate-200 text-xs font-bold uppercase">${item.auth}</td>
-                    <td class="p-4 border-b border-slate-200">
-                        <span class="block text-slate-700">${item.action}</span>
-                        <span class="text-[10px] text-slate-400">By: ${item.by}</span>
-                    </td>
-                    <td class="p-4 border-b border-slate-200 text-xs font-mono text-blue-600">${item.cite}</td>
-                </tr>
-            `).join('');
+      <div className="mt-6 text-center text-sm">
+        <button onClick={() => setIsLogin(!isLogin)} className="text-blue-600 font-semibold hover:underline">
+          {isLogin ? "Need an account? Register here" : "Already have an account? Sign in"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
-            rowCount.textContent = filtered.length;
-        }
+// --- STEP 3: DISTRICT & BUILDINGS ---
+function DistrictSetup({ user, setStep, districtData }) {
+  const [name, setName] = useState(districtData?.name || "");
+  const [buildings, setBuildings] = useState(districtData?.buildings || []);
+  const [newBldg, setNewBldg] = useState("");
 
-        searchInput.addEventListener('input', renderTable);
-        categoryFilter.addEventListener('change', renderTable);
+  const handleSave = async () => {
+    if (!name || buildings.length === 0) return;
+    const docData = {
+      name,
+      buildings,
+      members: districtData?.members || [user.uid],
+      updatedAt: serverTimestamp()
+    };
 
-        // Initial render
-        renderTable();
-    </script>
-</body>
-</html>
+    if (districtData?.id) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'districts', districtData.id), docData);
+    } else {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'districts'), { ...docData, tasks: [] });
+    }
+    setStep(3);
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto py-10">
+      <h2 className="text-3xl font-bold mb-2">District Configuration</h2>
+      <p className="text-slate-500 mb-8">Establish your school district profile and facility inventory.</p>
+
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+        <div>
+          <label className="block font-bold text-sm text-slate-700 mb-2 uppercase">School District Name</label>
+          <input 
+            type="text" className="w-full p-3 border rounded-xl bg-slate-50 text-lg font-semibold"
+            placeholder="e.g., Albany City School District"
+            value={name} onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="block font-bold text-sm text-slate-700 mb-2 uppercase">Buildings & Facilities</label>
+          <div className="flex gap-2 mb-4">
+            <input 
+              type="text" className="flex-1 p-3 border rounded-xl"
+              placeholder="e.g., High School Main Campus"
+              value={newBldg} onChange={(e) => setNewBldg(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (setBuildings([...buildings, newBldg]), setNewBldg(""))}
+            />
+            <button 
+              onClick={() => { if(newBldg) { setBuildings([...buildings, newBldg]); setNewBldg(""); }}}
+              className="bg-slate-900 text-white px-4 py-2 rounded-xl flex items-center gap-2"
+            >
+              <Plus size={18} /> Add
+            </button>
+          </div>
+          
+          <div className="grid grid-cols-1 gap-2">
+            {buildings.map((b, idx) => (
+              <div key={idx} className="flex justify-between items-center p-3 bg-blue-50 text-blue-900 rounded-xl border border-blue-100">
+                <span className="font-medium">{b}</span>
+                <button onClick={() => setBuildings(buildings.filter((_, i) => i !== idx))} className="text-red-600 p-1 hover:bg-red-100 rounded">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <button 
+          disabled={!name || buildings.length === 0}
+          onClick={handleSave}
+          className="w-full bg-blue-700 text-white p-4 rounded-xl font-bold disabled:opacity-50 hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
+        >
+          Continue to Task Selection <ChevronRight size={20} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- STEP 4: TASK SELECTION ---
+function TaskSelection({ districtData, masterTasks, setStep }) {
+  const [selected, setSelected] = useState([]);
+
+  const toggleTask = (taskId) => {
+    setSelected(prev => prev.includes(taskId) ? prev.filter(id => id !== taskId) : [...prev, taskId]);
+  };
+
+  const handleFinish = async () => {
+    const initializedTasks = selected.map(id => {
+      const mt = masterTasks.find(t => t.id === id);
+      return {
+        ...mt,
+        lastCompleted: "",
+        assignedBuildings: districtData.buildings,
+        documents: []
+      };
+    });
+
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'districts', districtData.id), {
+      tasks: initializedTasks
+    });
+    setStep(4);
+  };
+
+  return (
+    <div className="py-6">
+      <div className="flex justify-between items-end mb-8">
+        <div>
+          <button onClick={() => setStep(2)} className="text-blue-600 flex items-center gap-1 text-sm font-bold mb-2">
+            <ChevronLeft size={16} /> Back to District Setup
+          </button>
+          <h2 className="text-3xl font-bold">Compliance Matrix Selection</h2>
+          <p className="text-slate-500">Select required mandates applicable to your district.</p>
+        </div>
+        <button onClick={handleFinish} className="bg-blue-700 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-800 shadow-lg">
+          Initialize Selected Tasks ({selected.length})
+        </button>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        <table className="w-full text-left">
+          <thead className="bg-slate-800 text-white text-xs uppercase tracking-wider">
+            <tr>
+              <th className="p-4 w-12"></th>
+              <th className="p-4">Category / Task</th>
+              <th className="p-4">Frequency</th>
+              <th className="p-4">Authority</th>
+              <th className="p-4">Citation</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {masterTasks.map(task => (
+              <tr key={task.id} className={`hover:bg-slate-50 cursor-pointer ${selected.includes(task.id) ? 'bg-blue-50/50' : ''}`} onClick={() => toggleTask(task.id)}>
+                <td className="p-4">
+                  <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${selected.includes(task.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300'}`}>
+                    {selected.includes(task.id) && <CheckCircle2 size={16} />}
+                  </div>
+                </td>
+                <td className="p-4">
+                  <div className="font-bold text-slate-900">{task.task}</div>
+                  <div className="text-xs text-slate-500">{task.cat} • {task.sub}</div>
+                </td>
+                <td className="p-4 text-sm font-medium text-slate-700">{task.freq}</td>
+                <td className="p-4 text-xs font-black text-slate-400">{task.auth}</td>
+                <td className="p-4 text-xs font-mono text-blue-600 underline">
+                   {task.cite}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// --- STEP 5 & DASHBOARD: THE COMMAND CENTER ---
+function Dashboard({ districtData, setStep, masterTasks }) {
+  const [filter, setFilter] = useState("");
+  const [activeTask, setActiveTask] = useState(null);
+  const [customTaskOpen, setCustomTaskOpen] = useState(false);
+
+  const stats = useMemo(() => {
+    const total = districtData?.tasks?.length || 0;
+    const statuses = (districtData?.tasks || []).map(t => getStatus(calculateNextDue(t.lastCompleted, t.freq)).label);
+    return {
+      total,
+      compliant: statuses.filter(s => s === 'Compliant').length,
+      overdue: statuses.filter(s => s === 'Overdue').length,
+      dueSoon: statuses.filter(s => s === 'Due Soon').length
+    };
+  }, [districtData]);
+
+  const updateTask = async (updatedTask) => {
+    const newTasks = districtData.tasks.map(t => t.id === updatedTask.id ? updatedTask : t);
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'districts', districtData.id), { tasks: newTasks });
+    setActiveTask(null);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Metrics Row */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <p className="text-slate-500 text-sm font-bold uppercase mb-1">Total Mandates</p>
+          <h3 className="text-3xl font-black">{stats.total}</h3>
+        </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-emerald-500">
+          <p className="text-emerald-600 text-sm font-bold uppercase mb-1">Compliant</p>
+          <h3 className="text-3xl font-black text-emerald-700">{stats.compliant}</h3>
+        </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-amber-500">
+          <p className="text-amber-600 text-sm font-bold uppercase mb-1">Due Soon</p>
+          <h3 className="text-3xl font-black text-amber-700">{stats.dueSoon}</h3>
+        </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-4 border-l-red-500">
+          <p className="text-red-600 text-sm font-bold uppercase mb-1">Overdue</p>
+          <h3 className="text-3xl font-black text-red-700">{stats.overdue}</h3>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-4 border-b flex flex-col md:flex-row justify-between gap-4 items-center">
+          <div className="relative w-full md:w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input 
+              type="text" placeholder="Search tasks, authorities, or buildings..." 
+              className="w-full pl-10 pr-4 py-2 border rounded-xl bg-slate-50"
+              value={filter} onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setStep(3)} className="text-sm font-bold text-blue-700 px-4 py-2 hover:bg-blue-50 rounded-lg">Manage Mandates</button>
+            <button onClick={() => setCustomTaskOpen(true)} className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm">
+              <Plus size={16} /> New Custom Task
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 text-[10px] uppercase font-black text-slate-500">
+              <tr>
+                <th className="p-4">Status</th>
+                <th className="p-4">Compliance Task</th>
+                <th className="p-4">Authority & Citation</th>
+                <th className="p-4">Frequency</th>
+                <th className="p-4">Last Done</th>
+                <th className="p-4">Next Due</th>
+                <th className="p-4 text-center">Docs</th>
+                <th className="p-4"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {(districtData?.tasks || [])
+                .filter(t => t.task.toLowerCase().includes(filter.toLowerCase()) || t.cat.toLowerCase().includes(filter.toLowerCase()))
+                .map(task => {
+                  const nextDue = calculateNextDue(task.lastCompleted, task.freq);
+                  const status = getStatus(nextDue);
+                  return (
+                    <tr key={task.id} className="hover:bg-slate-50 group">
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase ${status.color}`}>
+                          {status.label}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="font-bold text-slate-900 leading-tight">{task.task}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{task.cat} / {task.sub}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="text-xs font-bold text-slate-600">{task.auth}</div>
+                        <a href={task.link} target="_blank" className="text-[10px] text-blue-600 hover:underline flex items-center gap-1">
+                          {task.cite} <ExternalLink size={8} />
+                        </a>
+                      </td>
+                      <td className="p-4 text-xs font-medium text-slate-600">{task.freq}</td>
+                      <td className="p-4 text-sm font-mono text-slate-500">{task.lastCompleted || '--'}</td>
+                      <td className="p-4 text-sm font-mono font-bold text-slate-900">{nextDue || 'N/A'}</td>
+                      <td className="p-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <FileText size={14} className={task.documents?.length > 0 ? 'text-blue-500' : 'text-slate-200'} />
+                          <span className="text-xs font-bold text-slate-400">{task.documents?.length || 0}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-right">
+                        <button 
+                          onClick={() => setActiveTask(task)}
+                          className="bg-white border border-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs font-bold hover:bg-slate-50 shadow-sm"
+                        >
+                          Update
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Task Update Modal */}
+      {activeTask && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+              <div>
+                <h3 className="font-black text-xl text-slate-900">Document Completion</h3>
+                <p className="text-xs text-slate-500">{activeTask.task}</p>
+              </div>
+              <button onClick={() => setActiveTask(null)} className="p-2 hover:bg-slate-200 rounded-full"><Trash2 size={20} /></button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black uppercase text-slate-400 mb-1">Completion Date</label>
+                  <input 
+                    type="date" className="w-full p-3 border rounded-xl font-mono" 
+                    value={activeTask.lastCompleted} 
+                    onChange={(e) => setActiveTask({...activeTask, lastCompleted: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase text-slate-400 mb-1">Next Expected Due</label>
+                  <div className="p-3 bg-slate-100 rounded-xl font-mono text-slate-600">
+                    {calculateNextDue(activeTask.lastCompleted, activeTask.freq) || 'Enter date first'}
+                  </div>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-black uppercase text-slate-400 mb-1">Supporting Documentation</label>
+                <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center bg-slate-50 group hover:border-blue-300 transition-colors cursor-pointer">
+                  <Plus className="mx-auto text-slate-300 group-hover:text-blue-500 mb-2" size={32} />
+                  <p className="text-sm font-bold text-slate-400 group-hover:text-slate-600">Click to Upload Inspection Report/Photo</p>
+                  <p className="text-[10px] text-slate-400">PDF, JPG, PNG accepted (Max 10MB)</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => updateTask(activeTask)}
+                  className="flex-1 bg-blue-700 text-white p-4 rounded-2xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-800"
+                >
+                  Save Compliance Record
+                </button>
+                <button onClick={() => setActiveTask(null)} className="px-6 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Task Modal */}
+      {customTaskOpen && (
+        <CustomTaskForm 
+          onClose={() => setCustomTaskOpen(false)} 
+          onSave={async (task) => {
+            const newTask = { ...task, id: 'c-' + Date.now(), lastCompleted: "", assignedBuildings: districtData.buildings, documents: [] };
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'districts', districtData.id), { tasks: arrayUnion(newTask) });
+            setCustomTaskOpen(false);
+          }} 
+        />
+      )}
+    </div>
+  );
+}
+
+function CustomTaskForm({ onClose, onSave }) {
+  const [data, setData] = useState({ cat: "Local/Custom", sub: "", task: "", freq: "Annual", auth: "District Mandate", action: "", by: "Staff", cite: "Local Policy" });
+  return (
+    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl">
+        <div className="p-6 border-b font-black text-xl">Create New Custom Compliance Task</div>
+        <div className="p-6 grid grid-cols-2 gap-4">
+          <input className="p-3 border rounded-xl" placeholder="Category" value={data.cat} onChange={e => setData({...data, cat: e.target.value})} />
+          <input className="p-3 border rounded-xl" placeholder="Subcategory" value={data.sub} onChange={e => setData({...data, sub: e.target.value})} />
+          <input className="p-3 border rounded-xl col-span-2" placeholder="Task Description" value={data.task} onChange={e => setData({...data, task: e.target.value})} />
+          <input className="p-3 border rounded-xl" placeholder="Frequency" value={data.freq} onChange={e => setData({...data, freq: e.target.value})} />
+          <input className="p-3 border rounded-xl" placeholder="Authority" value={data.auth} onChange={e => setData({...data, auth: e.target.value})} />
+          <input className="p-3 border rounded-xl col-span-2" placeholder="Action Required" value={data.action} onChange={e => setData({...data, action: e.target.value})} />
+          <input className="p-3 border rounded-xl" placeholder="Performed By" value={data.by} onChange={e => setData({...data, by: e.target.value})} />
+          <input className="p-3 border rounded-xl" placeholder="Citation" value={data.cite} onChange={e => setData({...data, cite: e.target.value})} />
+          <div className="col-span-2 flex gap-2 pt-4">
+             <button onClick={() => onSave(data)} className="flex-1 bg-slate-900 text-white p-4 rounded-xl font-bold">Create Task</button>
+             <button onClick={onClose} className="bg-slate-100 px-6 p-4 rounded-xl font-bold">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- SHARE PAGE ---
+function SharePage({ setStep }) {
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+
+  const handleShare = (e) => {
+    e.preventDefault();
+    setSent(true);
+    setTimeout(() => setStep(4), 2000);
+  };
+
+  return (
+    <div className="max-w-md mx-auto py-20 text-center">
+      <div className="bg-blue-100 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6">
+        <Users className="text-blue-700 w-10 h-10" />
+      </div>
+      <h2 className="text-3xl font-bold mb-4">Invite Your Team</h2>
+      <p className="text-slate-500 mb-8">Add colleagues from your district to collaborate on compliance tracking in real-time.</p>
+      
+      {!sent ? (
+        <form onSubmit={handleShare} className="space-y-4">
+          <input 
+            type="email" required placeholder="Colleague's work email" 
+            className="w-full p-4 border rounded-2xl text-lg"
+            value={email} onChange={(e) => setEmail(e.target.value)}
+          />
+          <button className="w-full bg-blue-700 text-white p-4 rounded-2xl font-bold shadow-lg hover:bg-blue-800">
+            Send Invitation Link
+          </button>
+          <button type="button" onClick={() => setStep(4)} className="text-slate-400 text-sm font-bold mt-4 hover:text-slate-600 underline">Back to Dashboard</button>
+        </form>
+      ) : (
+        <div className="p-8 bg-emerald-50 rounded-3xl border border-emerald-100 animate-in fade-in">
+          <CheckCircle2 className="mx-auto text-emerald-500 mb-2" size={48} />
+          <p className="text-emerald-800 font-bold">Invitation Sent!</p>
+          <p className="text-emerald-600 text-sm mt-1">Returning to dashboard...</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- ADMIN PANEL ---
+function AdminPanel({ masterTasks, setStep }) {
+  return (
+    <div className="space-y-8">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-black">NYS Compliance Admin</h2>
+          <p className="text-slate-500">Master Task Management & Statewide Requirements Distribution</p>
+        </div>
+        <button onClick={() => setStep(4)} className="bg-slate-100 px-6 py-2 rounded-xl font-bold text-slate-700">Exit Admin</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm col-span-2">
+          <h4 className="font-bold text-lg mb-4 flex items-center gap-2"><Clock size={20} className="text-blue-600" /> Push New Requirement</h4>
+          <div className="grid grid-cols-2 gap-4">
+             <input className="p-3 border rounded-xl text-sm" placeholder="Task Name" />
+             <input className="p-3 border rounded-xl text-sm" placeholder="Frequency" />
+             <input className="p-3 border rounded-xl text-sm" placeholder="Category" />
+             <input className="p-3 border rounded-xl text-sm" placeholder="Regulatory Authority" />
+             <textarea className="p-3 border rounded-xl col-span-2 text-sm" placeholder="Mandated Action Description"></textarea>
+             <button className="col-span-2 bg-blue-700 text-white p-4 rounded-2xl font-black shadow-lg shadow-blue-100 hover:bg-blue-800">
+               Broadcast Mandate to All 4,000+ Users
+             </button>
+          </div>
+        </div>
+
+        <div className="bg-slate-900 text-white p-8 rounded-3xl shadow-xl flex flex-col justify-between">
+          <div>
+            <h4 className="font-bold text-lg mb-2 flex items-center gap-2 text-blue-400"><Users size={20}/> User Analytics</h4>
+            <div className="space-y-4 mt-6">
+              <div className="flex justify-between border-b border-slate-700 pb-2">
+                <span className="text-slate-400 text-sm">Active Districts</span>
+                <span className="font-black">683</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-700 pb-2">
+                <span className="text-slate-400 text-sm">Registered Users</span>
+                <span className="font-black">4,112</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 text-sm">Documents Stored</span>
+                <span className="font-black">28.4k</span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-8">
+             <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">System Status</p>
+             <div className="flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+               <span className="text-xs font-bold text-emerald-400">All Nodes Operational</span>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="p-6 border-b bg-slate-50 font-bold text-slate-700">Master Mandate Database</div>
+        <table className="w-full text-left">
+          <thead className="bg-slate-100 text-[10px] uppercase font-black text-slate-400">
+            <tr>
+              <th className="p-4">Category</th>
+              <th className="p-4">Task</th>
+              <th className="p-4">Regulatory Authority</th>
+              <th className="p-4">Citation Reference</th>
+              <th className="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {masterTasks.map(t => (
+              <tr key={t.id} className="text-sm">
+                <td className="p-4 font-bold text-slate-600">{t.cat}</td>
+                <td className="p-4 text-slate-900">{t.task}</td>
+                <td className="p-4 text-slate-500 font-medium">{t.auth}</td>
+                <td className="p-4 font-mono text-blue-600 text-xs">{t.cite}</td>
+                <td className="p-4 text-right">
+                  <button className="text-slate-400 hover:text-blue-600 mr-2">Edit</button>
+                  <button className="text-slate-400 hover:text-red-600">Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
