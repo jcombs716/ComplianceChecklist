@@ -33,8 +33,7 @@ import {
   onSnapshot, 
   updateDoc, 
   writeBatch,
-  serverTimestamp,
-  deleteDoc
+  serverTimestamp
 } from 'firebase/firestore';
 
 // --- CONFIGURATION ---
@@ -46,7 +45,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'nys-compliance-porta
 
 // --- CONSTANTS ---
 const COMPLIANCE_TASKS = [
-  { id: 'fire-drill-1', name: 'Fire Drill (1-8)', frequency: 'Seasonal', days: 30, category: 'Life Safety' },
+  { id: 'fire-drill-1', name: 'Fire Drill (1-8)', frequency: 'Seasonal', days: 90, category: 'Life Safety' },
   { id: 'extinguisher', name: 'Fire Extinguisher Inspection', frequency: 'Monthly', days: 30, category: 'Life Safety' },
   { id: 'boiler', name: 'Annual Boiler Inspection', frequency: 'Annual', days: 365, category: 'Facilities' },
   { id: 'backflow', name: 'Backflow Preventer Test', frequency: 'Annual', days: 365, category: 'Water' },
@@ -57,7 +56,6 @@ const COMPLIANCE_TASKS = [
 // --- UTILITIES ---
 
 /**
- * Robust Batch Submitter (Addresses Scalability Issue #2)
  * Handles the 500-operation Firestore limit by chunking.
  */
 async function commitLargeBatch(db, operations) {
@@ -70,7 +68,7 @@ async function commitLargeBatch(db, operations) {
   }
 }
 
-// --- COMPONENTS ---
+// --- MAIN APPLICATION COMPONENT ---
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -80,7 +78,7 @@ const App = () => {
   const [view, setView] = useState('auth'); // auth, setup, dashboard
   const [error, setError] = useState(null);
 
-  // 1. Auth & Profile Initialization (Addresses Race Condition #3)
+  // 1. Auth Initialization
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -91,6 +89,7 @@ const App = () => {
         }
       } catch (err) {
         setError("Authentication failed: " + err.message);
+        setLoading(false);
       }
     };
     initAuth();
@@ -98,14 +97,17 @@ const App = () => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        // Fetch Profile from PRIVATE path (Addresses Security Issue #1)
         const profileRef = doc(db, 'artifacts', appId, 'users', u.uid, 'settings', 'profile');
-        const snap = await getDoc(profileRef);
-        if (snap.exists()) {
-          setProfile(snap.data());
-          setView('dashboard');
-        } else {
-          setView('setup');
+        try {
+          const snap = await getDoc(profileRef);
+          if (snap.exists()) {
+            setProfile(snap.data());
+            setView('dashboard');
+          } else {
+            setView('setup');
+          }
+        } catch (e) {
+          setError("Error loading profile: " + e.message);
         }
       } else {
         setView('auth');
@@ -116,18 +118,19 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. Task Synchronization (Addresses Race Condition #3 & Data Exposure #1)
+  // 2. Data Synchronization
   useEffect(() => {
     if (!user || !profile?.districtId) return;
 
-    // Listen to tasks in the public collection but specific to this district
+    // Use specific path pattern: /artifacts/{appId}/public/data/tasks
     const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'tasks');
-    const q = query(tasksRef); // Logic: Filter in JS to avoid index requirement for new users
+    const q = query(tasksRef);
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allTasks = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(t => t.districtId === profile.districtId && !t.archived); // Addresses Compliance Issue #5
+        .filter(t => t.districtId === profile.districtId && !t.archived);
+      
       setTasks(allTasks);
     }, (err) => setError("Data sync error: " + err.message));
 
@@ -137,7 +140,9 @@ const App = () => {
   const handleCompleteSetup = async (districtData) => {
     try {
       setLoading(true);
-      // 1. Save Profile to PRIVATE path
+      if (!user) return;
+
+      // Save Profile to Private path
       const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
       await setDoc(profileRef, {
         ...districtData,
@@ -145,7 +150,7 @@ const App = () => {
         userId: user.uid
       });
 
-      // 2. Initialize Tasks with Batch Chunking (Addresses Scalability Issue #2)
+      // Initialize Tasks
       const taskOps = [];
       districtData.buildings.forEach(building => {
         districtData.selectedTasks.forEach(taskType => {
@@ -170,7 +175,7 @@ const App = () => {
       setProfile(districtData);
       setView('dashboard');
     } catch (err) {
-      setError(err.message);
+      setError("Setup failed: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -178,7 +183,7 @@ const App = () => {
 
   const updateTask = async (taskId, currentTask) => {
     try {
-      // Data Validation (Addresses Logic Issue #4)
+      if (!user) return;
       const completionDate = new Date().toISOString();
       const nextDue = new Date(Date.now() + (currentTask.days * 86400000)).toISOString();
 
@@ -187,9 +192,8 @@ const App = () => {
         status: 'completed',
         lastCompleted: completionDate,
         dueDate: nextDue,
-        // Addresses Compliance #5: History tracking
         history: [
-          ...currentTask.history.slice(-9), // Keep last 10 for performance
+          ...(currentTask.history || []).slice(-9),
           { date: completionDate, user: user.uid }
         ]
       });
@@ -199,16 +203,22 @@ const App = () => {
   };
 
   const archiveTask = async (taskId) => {
-    // Addresses Compliance #5: Use Soft Delete
-    const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', taskId);
-    await updateDoc(taskRef, { archived: true });
+    try {
+      if (!user) return;
+      const taskRef = doc(db, 'artifacts', appId, 'public', 'data', 'tasks', taskId);
+      await updateDoc(taskRef, { archived: true });
+    } catch (err) {
+      setError("Archiving failed: " + err.message);
+    }
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-screen bg-slate-50">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-slate-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
@@ -249,6 +259,15 @@ const App = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {view === 'auth' && (
+          <div className="flex flex-col items-center justify-center py-20">
+             <div className="bg-blue-100 p-4 rounded-full mb-6 text-blue-600">
+               <Shield size={48} />
+             </div>
+             <h2 className="text-2xl font-bold mb-2">Access Portal</h2>
+             <p className="text-slate-500 mb-8">Logging you into the district secure environment...</p>
+          </div>
+        )}
         {view === 'setup' && <SetupStep onComplete={handleCompleteSetup} />}
         {view === 'dashboard' && (
           <Dashboard 
@@ -262,6 +281,8 @@ const App = () => {
     </div>
   );
 };
+
+// --- SUB-COMPONENTS ---
 
 const SetupStep = ({ onComplete }) => {
   const [step, setStep] = useState(1);
@@ -293,15 +314,15 @@ const SetupStep = ({ onComplete }) => {
             <div key={i} className={`h-2 w-16 rounded-full ${step >= i ? 'bg-blue-600' : 'bg-slate-200'}`} />
           ))}
         </div>
-        <h2 className="text-2xl font-bold">Initial Configuration</h2>
-        <p className="text-slate-500">Let's set up your district compliance dashboard.</p>
+        <h2 className="text-2xl font-bold">District Onboarding</h2>
+        <p className="text-slate-500">Configure your facility matrix to start tracking.</p>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border p-8">
         {step === 1 && (
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-bold mb-2">District Name</label>
+              <label className="block text-sm font-bold mb-2">School District Name</label>
               <input 
                 type="text" 
                 value={districtName}
@@ -322,7 +343,7 @@ const SetupStep = ({ onComplete }) => {
 
         {step === 2 && (
           <div className="space-y-6">
-            <label className="block text-sm font-bold mb-2">Building List</label>
+            <label className="block text-sm font-bold mb-2">Building/Facility List</label>
             <div className="space-y-3">
               {buildings.map((b, i) => (
                 <div key={i} className="flex gap-2">
@@ -331,7 +352,8 @@ const SetupStep = ({ onComplete }) => {
                     <input 
                       value={b}
                       onChange={e => updateBuilding(e.target.value, i)}
-                      className="w-full p-3 pl-10 bg-slate-50 border rounded-xl outline-none"
+                      placeholder="Building Name"
+                      className="w-full p-3 pl-10 bg-slate-50 border rounded-xl outline-none focus:ring-1 ring-blue-500"
                     />
                   </div>
                   <button 
@@ -351,15 +373,15 @@ const SetupStep = ({ onComplete }) => {
             </div>
             <div className="flex gap-4">
               <button onClick={prev} className="flex-1 font-bold py-3 text-slate-500">Back</button>
-              <button onClick={next} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700">Next Step</button>
+              <button onClick={next} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 shadow-md">Continue</button>
             </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="space-y-6">
-            <label className="block text-sm font-bold mb-4">Select Required Matrix Tasks</label>
-            <div className="grid grid-cols-1 gap-3">
+            <label className="block text-sm font-bold mb-4">Required Compliance Tracks</label>
+            <div className="grid grid-cols-1 gap-3 max-h-[400px] overflow-y-auto pr-2">
               {COMPLIANCE_TASKS.map((task, i) => (
                 <button
                   key={task.id}
@@ -370,7 +392,7 @@ const SetupStep = ({ onComplete }) => {
                 >
                   <div>
                     <p className="font-bold text-sm">{task.name}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-tight">{task.category} • {task.frequency}</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-tight font-semibold">{task.category} • {task.frequency}</p>
                   </div>
                   <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
                     selectedTasks.includes(i) ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
@@ -391,7 +413,7 @@ const SetupStep = ({ onComplete }) => {
                 })}
                 className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200"
               >
-                Launch Dashboard
+                Generate Matrix
               </button>
             </div>
           </div>
@@ -407,49 +429,41 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
 
   const stats = useMemo(() => {
     const now = new Date();
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.lastCompleted && t.status === 'completed').length;
     return {
-      total: tasks.length,
-      overdue: tasks.filter(t => new Date(t.dueDate) < now && t.status !== 'completed').length,
+      total,
+      overdue: tasks.filter(t => new Date(t.dueDate) < now).length,
       upcoming: tasks.filter(t => {
         const due = new Date(t.dueDate);
         const diff = (due - now) / (1000 * 3600 * 24);
         return diff >= 0 && diff <= 30;
       }).length,
-      completed: tasks.filter(t => t.status === 'completed').length
+      complianceRate: total ? Math.round((completed / total) * 100) : 0
     };
   }, [tasks]);
 
   const filteredTasks = tasks.filter(t => {
     const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || 
                           t.buildingName.toLowerCase().includes(search.toLowerCase());
-    if (filter === 'overdue') return matchesSearch && new Date(t.dueDate) < new Date();
+    if (!matchesSearch) return false;
+    
+    if (filter === 'overdue') return new Date(t.dueDate) < new Date();
     if (filter === 'upcoming') {
-       const diff = (new Date(t.dueDate) - new Date()) / (1000 * 3600 * 24);
-       return matchesSearch && diff >= 0 && diff <= 30;
+        const diff = (new Date(t.dueDate) - new Date()) / (1000 * 3600 * 24);
+        return diff >= 0 && diff <= 30;
     }
-    return matchesSearch;
+    return true;
   });
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 animate-in fade-in duration-500">
       {/* Stats Section */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Items', val: stats.total, color: 'blue', icon: FileText },
-          { label: 'Overdue', val: stats.overdue, color: 'red', icon: AlertTriangle },
-          { label: 'Next 30 Days', val: stats.upcoming, color: 'orange', icon: Clock },
-          { label: 'Compliance Rate', val: stats.total ? Math.round((stats.completed/stats.total)*100) + '%' : '0%', color: 'emerald', icon: CheckCircle },
-        ].map((s, i) => (
-          <div key={i} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
-            <div className="flex justify-between items-start mb-2">
-              <span className={`p-2 rounded-lg bg-${s.color}-50 text-${s.color}-600`}>
-                <s.icon size={20} />
-              </span>
-            </div>
-            <p className="text-2xl font-black">{s.val}</p>
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">{s.label}</p>
-          </div>
-        ))}
+        <StatCard label="Total Tracks" val={stats.total} color="blue" icon={FileText} />
+        <StatCard label="Overdue Items" val={stats.overdue} color="red" icon={AlertTriangle} />
+        <StatCard label="30 Day Outlook" val={stats.upcoming} color="orange" icon={Clock} />
+        <StatCard label="Matrix Health" val={stats.complianceRate + '%'} color="emerald" icon={CheckCircle} />
       </div>
 
       {/* Control Bar */}
@@ -460,7 +474,7 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search tasks or buildings..."
-            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 ring-blue-500 outline-none shadow-sm"
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 ring-blue-600 outline-none shadow-sm"
           />
         </div>
         <div className="flex gap-2 bg-white p-1 rounded-xl border shadow-sm">
@@ -478,18 +492,18 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
         </div>
       </div>
 
-      {/* Main Matrix - Fixed Scaling Issues */}
+      {/* Main Matrix Table */}
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left min-w-[900px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">Compliance Item</th>
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">Building</th>
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">Frequency</th>
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">Last Recorded</th>
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase">Next Due</th>
-                <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase text-right">Actions</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Compliance Item</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Building</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Frequency</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Last Recorded</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Next Due</th>
+                <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -498,7 +512,7 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
                   <td colSpan="6" className="px-6 py-12 text-center">
                     <div className="flex flex-col items-center gap-2 opacity-40">
                       <Search size={48} />
-                      <p className="font-bold">No tasks found matching criteria</p>
+                      <p className="font-bold">No records found matching current filters</p>
                     </div>
                   </td>
                 </tr>
@@ -524,7 +538,9 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2 text-sm">
                         <Calendar size={14} className="text-slate-400" />
-                        {task.lastCompleted ? new Date(task.lastCompleted).toLocaleDateString() : '—'}
+                        <span className="text-slate-500">
+                          {task.lastCompleted ? new Date(task.lastCompleted).toLocaleDateString() : 'No record'}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -534,17 +550,16 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex justify-end gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => onUpdate(task.id, task)}
-                          className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700"
+                          className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm"
                         >
                           Mark Done
                         </button>
                         <button 
                           onClick={() => onArchive(task.id)}
-                          title="Archive Record"
-                          className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50"
+                          className="p-1.5 text-slate-300 hover:text-red-500 rounded-lg hover:bg-red-50"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -557,12 +572,27 @@ const Dashboard = ({ tasks, onUpdate, onArchive, profile }) => {
           </table>
         </div>
         <div className="p-4 bg-slate-50 border-t flex justify-between items-center text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-          <span>System: Active Compliance Monitoring</span>
-          <span>NYS Record Retention Policy Enabled</span>
+          <div className="flex gap-4">
+            <span>System Status: Online</span>
+            <span>Policy: NYS Retention Standard 4.1</span>
+          </div>
+          <span>User UID: {auth.currentUser?.uid}</span>
         </div>
       </div>
     </div>
   );
 };
+
+const StatCard = ({ label, val, color, icon: Icon }) => (
+  <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+    <div className="flex justify-between items-start mb-2">
+      <span className={`p-2 rounded-lg bg-${color}-50 text-${color}-600`}>
+        <Icon size={20} />
+      </span>
+    </div>
+    <p className="text-2xl font-black">{val}</p>
+    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p>
+  </div>
+);
 
 export default App;
