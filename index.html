@@ -30,7 +30,9 @@ import {
   ShieldCheck,
   ChevronRight,
   FileText,
-  Activity
+  Activity,
+  LayoutDashboard,
+  Database
 } from 'lucide-react';
 
 // --- CONFIGURATION & FIREBASE ---
@@ -51,7 +53,7 @@ const COMPLIANCE_FREQUENCIES = {
 };
 
 const MASTER_TASKS = [
-  { id: 'fire-drill', title: 'Fire & Emergency Drills', category: 'Safety', frequency: COMPLIANCE_FREQUENCIES.DRILL, description: '8 evacuation and 4 lockdown drills annually.' },
+  { id: 'fire-drill', title: 'Fire & Emergency Drills', category: 'Safety', frequency: COMPLIANCE_FREQUENCIES.ANNUAL, description: '8 evacuation and 4 lockdown drills annually.' },
   { id: 'bcs', title: 'Building Condition Survey', category: 'Facilities', frequency: COMPLIANCE_FREQUENCIES.TRIENNIAL, description: 'Comprehensive inspection required every 3 years for NYSED.' },
   { id: 'lead-test', title: 'Lead-in-Water Testing', category: 'Health', frequency: COMPLIANCE_FREQUENCIES.TRIENNIAL, description: 'Periodic testing of all potable water outlets.' },
   { id: 'fire-insp', title: 'Annual Fire Inspection', category: 'Safety', frequency: COMPLIANCE_FREQUENCIES.ANNUAL, description: 'NYS certified code official inspection.' },
@@ -67,32 +69,36 @@ const ComplianceEngine = {
     const date = new Date(lastDate);
     if (isNaN(date.getTime())) return null;
 
+    const nextDate = new Date(date);
     switch (frequency) {
       case COMPLIANCE_FREQUENCIES.ANNUAL:
-        date.setFullYear(date.getFullYear() + 1);
+        nextDate.setFullYear(date.getFullYear() + 1);
         break;
       case COMPLIANCE_FREQUENCIES.BIENNIAL:
-        date.setFullYear(date.getFullYear() + 2);
+        nextDate.setFullYear(date.getFullYear() + 2);
         break;
       case COMPLIANCE_FREQUENCIES.TRIENNIAL:
-        date.setFullYear(date.getFullYear() + 3);
+        nextDate.setFullYear(date.getFullYear() + 3);
         break;
       case COMPLIANCE_FREQUENCIES.MONTHLY:
-        date.setMonth(date.getMonth() + 1);
+        nextDate.setMonth(date.getMonth() + 1);
         break;
       case COMPLIANCE_FREQUENCIES.QUARTERLY:
-        date.setMonth(date.getMonth() + 3);
+        nextDate.setMonth(date.getMonth() + 3);
         break;
       default:
-        return null;
+        nextDate.setFullYear(date.getFullYear() + 1);
     }
-    return date.toISOString().split('T')[0];
+    return nextDate.toISOString().split('T')[0];
   },
   getStatus: (dueDate) => {
     if (!dueDate) return 'pending';
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const due = new Date(dueDate);
-    const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
+    const diffTime = due - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
     if (diffDays < 0) return 'overdue';
     if (diffDays <= 30) return 'warning';
     return 'compliant';
@@ -108,7 +114,7 @@ export default function App() {
   const [userTasks, setUserTasks] = useState([]);
   const [view, setView] = useState('dashboard');
 
-  // Auth Lifecycle (Rule 3)
+  // Rule 3: Auth Initialization
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -118,8 +124,8 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error(err);
-        setError("Network connection issue. Please refresh.");
+        console.error("Auth Error:", err);
+        setError("Connection error. Please try again.");
       }
     };
     initAuth();
@@ -130,20 +136,23 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Data Lifecycle (Rule 1)
+  // Rule 1: Data Subscriptions
   useEffect(() => {
     if (!user) return;
 
+    // District Metadata
     const districtDoc = doc(db, 'artifacts', appId, 'public', 'data', 'districts', user.uid);
     const unsubDistrict = onSnapshot(districtDoc, (snapshot) => {
       if (snapshot.exists()) setDistrict(snapshot.data());
-    }, (err) => setError("Syncing district data failed."));
+    }, (err) => setError("Syncing district profile failed."));
 
+    // Mandates/Tasks
     const tasksColl = collection(db, 'artifacts', appId, 'public', 'data', 'district_tasks');
     const tasksQuery = query(tasksColl, where('userId', '==', user.uid));
     const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
-      setUserTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => setError("Syncing mandates failed."));
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserTasks(data);
+    }, (err) => setError("Syncing matrix data failed."));
 
     return () => { unsubDistrict(); unsubTasks(); };
   }, [user]);
@@ -158,16 +167,17 @@ export default function App() {
         userId: user.uid, 
         updatedAt: new Date().toISOString() 
       }, { merge: true });
-    } catch (err) { setError("Failed to save profile changes."); }
+    } catch (err) { setError("Failed to update profile."); }
   };
 
   const toggleTask = async (masterTask) => {
     if (!user) return;
-    const taskId = `${user.uid}_${masterTask.id}`; // Idempotent Key
+    const taskId = `${user.uid}_${masterTask.id}`;
     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'district_tasks', taskId);
     
     try {
-      if (userTasks.some(t => t.masterId === task.id)) {
+      const existing = userTasks.find(t => t.masterId === masterTask.id);
+      if (existing) {
         await deleteDoc(ref);
       } else {
         await setDoc(ref, {
@@ -180,81 +190,79 @@ export default function App() {
           nextDueDate: null
         });
       }
-    } catch (err) { setError("Matrix update failed."); }
+    } catch (err) { setError("Matrix toggle failed."); }
   };
 
   const updateTaskStatus = async (taskId, date) => {
     if (!user) return;
     const task = userTasks.find(t => t.id === taskId);
+    if (!task) return;
+    
     const nextDue = ComplianceEngine.calculateNextDue(date, task.frequency);
     try {
       const ref = doc(db, 'artifacts', appId, 'public', 'data', 'district_tasks', taskId);
-      await setDoc(ref, { lastCompletionDate: date, nextDueDate: nextDue }, { merge: true });
-    } catch (err) { setError("Action update failed."); }
+      await setDoc(ref, { 
+        lastCompletionDate: date, 
+        nextDueDate: nextDue 
+      }, { merge: true });
+    } catch (err) { setError("Date update failed."); }
   };
 
-  if (loading) return (
-    <div className="h-screen flex items-center justify-center bg-slate-50">
-      <div className="text-center">
-        <Loader2 className="animate-spin text-blue-600 mx-auto mb-4" size={40} />
-        <p className="text-sm font-black text-slate-400 uppercase tracking-widest">Securing Data Connection...</p>
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="animate-spin text-indigo-600" size={48} />
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">NYS Compliance Engine Initializing</p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20 selection:bg-blue-100 antialiased">
-      {/* Navigation */}
-      <nav className="bg-white border-b sticky top-0 z-50 px-6 h-16 flex items-center justify-between shadow-sm backdrop-blur-md bg-white/80">
-        <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setView('dashboard')}>
-          <div className="bg-blue-600 p-1.5 rounded-lg group-hover:rotate-12 transition-transform">
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-24 selection:bg-indigo-100">
+      {/* Navigation Bar */}
+      <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-16 flex items-center justify-between">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('dashboard')}>
+          <div className="bg-indigo-600 p-1.5 rounded-lg">
             <ShieldCheck className="text-white w-5 h-5" />
           </div>
-          <h1 className="font-black text-lg uppercase tracking-tight">NYS Compliance Matrix</h1>
+          <span className="font-black text-sm uppercase tracking-tight hidden sm:block">
+            NYS Compliance <span className="text-indigo-600">Matrix</span>
+          </span>
         </div>
-        
-        <div className="flex bg-slate-100 p-1 rounded-xl">
-          {[
-            { id: 'dashboard', label: 'Overview', icon: Activity },
-            { id: 'tasks', label: 'Matrix', icon: FileText },
-            { id: 'setup', label: 'Settings', icon: Settings }
-          ].map(tab => (
-            <button 
-              key={tab.id} 
-              onClick={() => setView(tab.id)} 
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-black uppercase transition-all duration-200 ${
-                view === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <tab.icon size={14} />
-              <span className="hidden md:inline">{tab.label}</span>
-            </button>
-          ))}
+
+        <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+          <NavBtn id="dashboard" icon={LayoutDashboard} active={view} set={setView} label="Dashboard" />
+          <NavBtn id="tasks" icon={Database} active={view} set={setView} label="Matrix" />
+          <NavBtn id="setup" icon={Settings} active={view} set={setView} label="Setup" />
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto p-4 md:p-8">
+      {/* Content Area */}
+      <main className="max-w-6xl mx-auto px-4 pt-8 animate-in fade-in duration-300">
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 p-4 rounded-2xl flex justify-between items-center shadow-lg shadow-red-100 animate-in slide-in-from-top-4">
-            <div className="flex items-center gap-3">
+          <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-3 text-red-700">
               <AlertCircle size={20} />
               <span className="text-sm font-bold">{error}</span>
             </div>
-            <button onClick={() => setError(null)} className="hover:bg-red-100 p-1 rounded-full transition">×</button>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">×</button>
           </div>
         )}
-        
-        {view === 'dashboard' && <Dashboard district={district} userTasks={userTasks} setView={setView} />}
-        {view === 'setup' && <Setup district={district} updateDistrict={updateDistrict} />}
-        {view === 'tasks' && <Matrix userTasks={userTasks} toggleTask={toggleTask} updateTaskStatus={updateTaskStatus} />}
+
+        {view === 'dashboard' && <DashboardView district={district} userTasks={userTasks} setView={setView} />}
+        {view === 'setup' && <SetupView district={district} updateDistrict={updateDistrict} />}
+        {view === 'tasks' && <MatrixView userTasks={userTasks} toggleTask={toggleTask} updateTaskStatus={updateTaskStatus} />}
       </main>
 
-      {/* Footer Meta */}
-      <footer className="fixed bottom-4 left-6">
-        <div className="bg-white/50 backdrop-blur-sm px-3 py-1.5 rounded-full border border-slate-200 flex items-center gap-2 shadow-sm">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-[10px] font-mono font-bold text-slate-500">USER: {user?.uid}</span>
+      {/* Static Footer */}
+      <footer className="fixed bottom-0 left-0 right-0 h-14 bg-white/60 backdrop-blur-sm border-t border-slate-200 px-6 flex items-center justify-between text-[10px] font-mono text-slate-400">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          SYSTEM ONLINE: {user?.uid.slice(0, 8)}...
         </div>
+        <div>VER: 4.0.2 FINAL</div>
       </footer>
     </div>
   );
@@ -262,295 +270,241 @@ export default function App() {
 
 // --- SUB-COMPONENTS ---
 
-function Dashboard({ district, userTasks, setView }) {
+function NavBtn({ id, icon: Icon, active, set, label }) {
+  const isActive = active === id;
+  return (
+    <button 
+      onClick={() => set(id)}
+      className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+        isActive ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-indigo-600'
+      }`}
+    >
+      <Icon size={14} />
+      <span className="hidden md:inline">{label}</span>
+    </button>
+  );
+}
+
+function DashboardView({ district, userTasks, setView }) {
   const stats = useMemo(() => {
     const overdue = userTasks.filter(t => ComplianceEngine.getStatus(t.nextDueDate) === 'overdue');
     const warning = userTasks.filter(t => ComplianceEngine.getStatus(t.nextDueDate) === 'warning');
-    return { overdue, warning, total: userTasks.length };
+    const health = userTasks.length > 0 ? Math.round(((userTasks.length - overdue.length) / userTasks.length) * 100) : 100;
+    return { overdue, warning, health, total: userTasks.length };
   }, [userTasks]);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <header className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 md:p-12 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden">
+    <div className="space-y-8">
+      <header className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden shadow-2xl">
         <div className="relative z-10">
-          <span className="text-blue-400 font-black text-xs uppercase tracking-[0.3em] mb-4 block">District Monitor</span>
-          <h2 className="text-4xl md:text-5xl font-black mb-4 leading-none tracking-tight">
-            {district?.name || "School District Compliance"}
+          <h2 className="text-4xl md:text-5xl font-black mb-4 tracking-tighter">
+            {district?.name || "Ready for Compliance?"}
           </h2>
+          <p className="text-slate-400 font-bold mb-8 max-w-lg">
+            Monitor state-mandated safety, health, and facility inspections in real-time.
+          </p>
           <div className="flex gap-4">
-            <button 
-              onClick={() => setView('tasks')}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full font-black text-sm transition-all flex items-center gap-2"
-            >
-              Analyze Mandates <ChevronRight size={16} />
-            </button>
+            <button onClick={() => setView('tasks')} className="bg-indigo-600 px-6 py-2.5 rounded-full font-black text-xs uppercase tracking-widest hover:bg-indigo-500 transition">View Matrix</button>
+            <button onClick={() => setView('setup')} className="bg-white/10 px-6 py-2.5 rounded-full font-black text-xs uppercase tracking-widest hover:bg-white/20 transition backdrop-blur-md">Update Profile</button>
           </div>
         </div>
-        <div className="absolute top-[-10%] right-[-10%] w-96 h-96 bg-blue-500/10 rounded-full blur-[100px]" />
+        <div className="absolute right-[-5%] bottom-[-10%] opacity-20 rotate-12">
+          <ShieldCheck size={280} className="text-indigo-500" />
+        </div>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatCard 
-          label="Compliance Health" 
-          value={`${stats.total > 0 ? Math.round(((stats.total - stats.overdue.length) / stats.total) * 100) : 100}%`}
-          color="blue"
-        />
-        <StatCard 
-          label="Overdue Actions" 
-          value={stats.overdue.length} 
-          color={stats.overdue.length > 0 ? "red" : "emerald"}
-        />
-        <StatCard 
-          label="Upcoming (30d)" 
-          value={stats.warning.length} 
-          color="amber"
-        />
+        <DashboardStat label="System Health" value={`${stats.health}%`} color="indigo" />
+        <DashboardStat label="Overdue Items" value={stats.overdue.length} color={stats.overdue.length > 0 ? "red" : "emerald"} />
+        <DashboardStat label="Approaching" value={stats.warning.length} color="amber" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <section className="bg-white p-8 rounded-[2rem] border border-slate-200">
-          <h3 className="text-xs font-black uppercase text-slate-400 mb-6 tracking-widest flex items-center gap-2">
-            <AlertCircle size={16} className="text-red-500"/> Critical Action Required
-          </h3>
-          <div className="space-y-4">
+        <div className="bg-white border border-slate-200 rounded-[2rem] p-8">
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Immediate Actions</h3>
+          <div className="space-y-3">
             {stats.overdue.map(t => (
-              <div key={t.id} className="flex items-center justify-between p-4 rounded-2xl bg-red-50 border border-red-100 group cursor-pointer" onClick={() => setView('tasks')}>
-                <div>
-                  <h4 className="font-black text-red-900 text-sm">{t.title}</h4>
-                  <p className="text-[10px] font-bold text-red-500 uppercase">Expired: {t.nextDueDate}</p>
-                </div>
-                <ChevronRight size={18} className="text-red-300 group-hover:translate-x-1 transition-transform" />
+              <div key={t.id} className="flex items-center justify-between p-4 bg-red-50 border border-red-100 rounded-2xl group cursor-pointer" onClick={() => setView('tasks')}>
+                <div className="font-black text-red-900 text-sm">{t.title}</div>
+                <div className="text-[10px] font-mono text-red-500">{t.nextDueDate}</div>
               </div>
             ))}
             {stats.overdue.length === 0 && (
-              <div className="py-12 text-center">
-                <CheckCircle2 className="text-emerald-500 mx-auto mb-2" size={32} />
-                <p className="text-slate-400 text-sm font-bold">Everything is currently compliant.</p>
-              </div>
+              <div className="py-12 text-center text-slate-300 font-black uppercase text-xs">All Clear</div>
             )}
           </div>
-        </section>
+        </div>
 
-        <section className="bg-white p-8 rounded-[2rem] border border-slate-200">
-          <h3 className="text-xs font-black uppercase text-slate-400 mb-6 tracking-widest flex items-center gap-2">
-            <Building2 size={16} className="text-blue-500"/> Facility Status
-          </h3>
-          <div className="grid grid-cols-1 gap-2">
+        <div className="bg-white border border-slate-200 rounded-[2rem] p-8">
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Facilities List</h3>
+          <div className="space-y-2">
             {(district?.buildings || []).map((b, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 transition-colors">
-                <div className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="font-black text-slate-700 text-sm">{b}</span>
+              <div key={i} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl font-bold text-slate-700 text-sm">
+                <Building2 size={16} className="text-indigo-500" />
+                {b}
               </div>
             ))}
             {(!district?.buildings || district.buildings.length === 0) && (
-              <p className="text-slate-400 text-sm italic">No facilities added to profile.</p>
+              <p className="text-slate-400 text-xs text-center py-8 font-bold">No buildings configured in setup.</p>
             )}
           </div>
-        </section>
+        </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, color }) {
+function DashboardStat({ label, value, color }) {
   const colors = {
-    blue: "bg-blue-600 shadow-blue-100",
-    red: "bg-red-500 shadow-red-100",
-    amber: "bg-amber-500 shadow-amber-100",
-    emerald: "bg-emerald-500 shadow-emerald-100"
+    indigo: "text-indigo-600",
+    red: "text-red-600",
+    amber: "text-amber-600",
+    emerald: "text-emerald-600"
   };
   return (
-    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-lg transition-all">
-      <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">{label}</p>
-      <div className="flex items-end justify-between">
-        <h4 className="text-4xl font-black text-slate-900">{value}</h4>
-        <div className={`w-8 h-8 rounded-full ${colors[color] || colors.blue} opacity-20`} />
-      </div>
+    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+      <div className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">{label}</div>
+      <div className={`text-4xl font-black ${colors[color]}`}>{value}</div>
     </div>
   );
 }
 
-function Setup({ district, updateDistrict }) {
+function SetupView({ district, updateDistrict }) {
   const [name, setName] = useState(district?.name || '');
-  const [newBldg, setNewBldg] = useState('');
-  
-  return (
-    <div className="max-w-2xl mx-auto bg-white p-10 rounded-[3rem] border border-slate-200 shadow-2xl space-y-10 animate-in slide-in-from-bottom-8">
-      <div>
-        <h2 className="text-3xl font-black flex items-center gap-3 mb-2"><Building2 className="text-blue-600"/> District Profile</h2>
-        <p className="text-slate-500 font-medium">Configure your organizational identity and physical footprint.</p>
-      </div>
-      
-      <div className="space-y-6">
-        <div className="space-y-3">
-          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Official Name</label>
-          <div className="flex gap-2">
-            <input 
-              value={name} 
-              onChange={e => setName(e.target.value)} 
-              placeholder="e.g. Central City CSD" 
-              className="flex-1 bg-slate-50 border-0 p-4 rounded-2xl font-black outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-600 transition-all" 
-            />
-            <button 
-              onClick={() => updateDistrict({ name })} 
-              className="bg-slate-900 text-white px-8 rounded-2xl font-black hover:bg-black transition active:scale-95 shadow-xl"
-            >
-              Update
-            </button>
-          </div>
-        </div>
+  const [bldg, setBldg] = useState('');
 
-        <div className="space-y-3">
-          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block">Facility Registry</label>
-          <div className="flex gap-2">
-            <input 
-              value={newBldg}
-              onChange={e => setNewBldg(e.target.value)}
-              onKeyDown={e => { 
-                if(e.key === 'Enter' && newBldg.trim()){ 
-                  updateDistrict({ buildings: [...(district?.buildings || []), newBldg.trim()] }); 
-                  setNewBldg(''); 
-                } 
-              }} 
-              placeholder="New building name..." 
-              className="flex-1 bg-slate-50 border-0 p-4 rounded-2xl font-black outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-600 transition-all" 
-            />
-            <button 
-              onClick={() => { if(newBldg.trim()){ updateDistrict({ buildings: [...(district?.buildings || []), newBldg.trim()] }); setNewBldg(''); }}}
-              className="bg-blue-600 text-white p-4 rounded-2xl hover:bg-blue-700 transition"
-            >
-              <Plus size={20} />
-            </button>
+  return (
+    <div className="max-w-xl mx-auto space-y-8 animate-in slide-in-from-bottom-8">
+      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
+        <h2 className="text-2xl font-black text-slate-900">District Profile</h2>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">District Name</label>
+            <div className="flex gap-2">
+              <input 
+                value={name} onChange={e => setName(e.target.value)}
+                className="flex-1 bg-slate-50 border-0 p-4 rounded-xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none" 
+              />
+              <button onClick={() => updateDistrict({ name })} className="bg-indigo-600 text-white px-6 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 transition">Save</button>
+            </div>
           </div>
           
-          <div className="grid grid-cols-1 gap-3 mt-4">
-            {(district?.buildings || []).map((b, i) => (
-              <div key={i} className="bg-slate-50 p-4 rounded-2xl flex justify-between font-black text-slate-700 border border-slate-100 group animate-in fade-in">
-                {b}
-                <button 
-                  onClick={() => updateDistrict({ buildings: district.buildings.filter((_, idx) => idx !== i) })} 
-                  className="text-slate-300 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 size={18}/>
-                </button>
-              </div>
-            ))}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Add Building</label>
+            <div className="flex gap-2">
+              <input 
+                value={bldg} onChange={e => setBldg(e.target.value)}
+                placeholder="Building Name..."
+                className="flex-1 bg-slate-50 border-0 p-4 rounded-xl font-bold ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-600 outline-none" 
+              />
+              <button 
+                onClick={() => { if(bldg){ updateDistrict({ buildings: [...(district?.buildings || []), bldg] }); setBldg(''); }}}
+                className="bg-indigo-600 text-white p-4 rounded-xl hover:bg-indigo-700 transition"
+              >
+                <Plus size={20} />
+              </button>
+            </div>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2 mt-6">
+          {(district?.buildings || []).map((b, i) => (
+            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl font-bold text-slate-600">
+              {b}
+              <button 
+                onClick={() => updateDistrict({ buildings: district.buildings.filter((_, idx) => idx !== i) })}
+                className="text-slate-300 hover:text-red-500"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
         </div>
       </div>
     </div>
   );
 }
 
-function Matrix({ userTasks, toggleTask, updateTaskStatus }) {
-  const [activeTab, setActiveTab] = useState('active');
+function MatrixView({ userTasks, toggleTask, updateTaskStatus }) {
+  const [tab, setTab] = useState('active');
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-12">
       <div className="flex gap-8 border-b border-slate-200">
-        <button 
-          onClick={() => setActiveTab('active')} 
-          className={`pb-4 text-sm font-black uppercase tracking-widest transition-all relative ${activeTab === 'active' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          My Matrix
-          {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600 rounded-t-full" />}
-        </button>
-        <button 
-          onClick={() => setActiveTab('library')} 
-          className={`pb-4 text-sm font-black uppercase tracking-widest transition-all relative ${activeTab === 'library' ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Regulatory Library
-          {activeTab === 'library' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600 rounded-t-full" />}
-        </button>
+        <TabBtn active={tab === 'active'} onClick={() => setTab('active')} label="Your Active Matrix" />
+        <TabBtn active={tab === 'lib'} onClick={() => setTab('lib')} label="Regulatory Library" />
       </div>
 
-      {activeTab === 'library' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in slide-in-from-right-4">
+      {tab === 'lib' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-right-4">
           {MASTER_TASKS.map(task => {
-            const isAdded = userTasks.some(t => t.masterId === task.id);
+            const exists = userTasks.some(t => t.masterId === task.id);
             return (
               <div 
                 key={task.id} 
-                onClick={() => toggleTask(task)} 
-                className={`p-8 rounded-[2.5rem] border-2 cursor-pointer transition-all duration-300 group ${
-                  isAdded ? 'border-blue-600 bg-blue-50/30' : 'border-white bg-white hover:border-slate-200 shadow-sm'
+                onClick={() => toggleTask(task)}
+                className={`p-6 rounded-[2rem] border-2 cursor-pointer transition-all ${
+                  exists ? 'border-indigo-600 bg-indigo-50/20' : 'border-white bg-white hover:border-slate-200'
                 }`}
               >
-                <div className="flex justify-between items-start mb-6">
-                  <span className="text-[10px] font-black uppercase bg-slate-100 px-3 py-1 rounded-full text-slate-500 tracking-widest">{task.category}</span>
-                  <div className={`p-2 rounded-full transition-all ${isAdded ? 'bg-blue-600' : 'bg-slate-100 group-hover:bg-blue-100'}`}>
-                    <CheckCircle2 className={isAdded ? 'text-white' : 'text-slate-300 group-hover:text-blue-400'} size={20} />
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-[10px] font-black uppercase text-indigo-500 bg-indigo-50 px-3 py-1 rounded-full">{task.category}</span>
+                  <div className={`p-1.5 rounded-full ${exists ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-300'}`}>
+                    <CheckCircle2 size={16} />
                   </div>
                 </div>
-                <h4 className="font-black text-slate-900 text-xl mb-2">{task.title}</h4>
-                <p className="text-sm text-slate-500 font-medium mb-6 leading-relaxed line-clamp-2">{task.description}</p>
-                <div className="flex items-center gap-2">
-                  <Calendar size={14} className="text-blue-500" />
-                  <span className="text-xs font-black text-blue-600 uppercase tracking-widest">{task.frequency} Cycle</span>
-                </div>
+                <h4 className="font-black text-slate-900 mb-2">{task.title}</h4>
+                <p className="text-xs text-slate-400 font-bold uppercase">{task.frequency}</p>
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="space-y-4 animate-in slide-in-from-left-4">
+        <div className="space-y-4">
           {userTasks.length === 0 && (
-            <div className="py-24 text-center border-4 border-dashed rounded-[3rem] border-slate-200">
-              <div className="bg-slate-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <FileText className="text-slate-300" size={32} />
-              </div>
-              <h3 className="font-black text-slate-400 uppercase tracking-widest">No Active Mandates</h3>
-              <p className="text-slate-400 text-sm mt-2 mb-6">Select requirements from the library to start tracking.</p>
-              <button 
-                onClick={() => setActiveTab('library')}
-                className="bg-slate-900 text-white px-8 py-3 rounded-full font-black text-xs uppercase tracking-widest shadow-lg hover:bg-black transition"
-              >
-                Browse Library
-              </button>
+            <div className="text-center py-24 bg-white rounded-[3rem] border border-dashed border-slate-300">
+              <Database className="mx-auto text-slate-200 mb-4" size={48} />
+              <p className="text-slate-400 font-black uppercase text-sm">Matrix is Empty</p>
+              <button onClick={() => setTab('lib')} className="mt-4 text-indigo-600 font-black text-xs uppercase tracking-widest hover:underline">Add Mandates from Library</button>
             </div>
           )}
-          
           {userTasks.map(task => {
             const status = ComplianceEngine.getStatus(task.nextDueDate);
+            const statusStyles = {
+              overdue: 'bg-red-50 text-red-600',
+              warning: 'bg-amber-50 text-amber-600',
+              compliant: 'bg-emerald-50 text-emerald-600',
+              pending: 'bg-slate-100 text-slate-500'
+            };
+
             return (
-              <div key={task.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col lg:flex-row gap-8 lg:items-center hover:shadow-xl transition-all group">
+              <div key={task.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 flex flex-col md:row items-start md:flex-row md:items-center gap-6 group hover:shadow-lg transition-all">
                 <div className="flex-1">
-                  <div className={`text-[10px] font-black uppercase tracking-[0.2em] mb-3 px-3 py-1 rounded-full w-fit ${
-                    status === 'overdue' ? 'bg-red-100 text-red-600' : 
-                    status === 'warning' ? 'bg-amber-100 text-amber-600' : 
-                    status === 'pending' ? 'bg-slate-100 text-slate-500' :
-                    'bg-emerald-100 text-emerald-600'
-                  }`}>
-                    {status === 'pending' ? 'Dates Required' : status}
+                  <div className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full w-fit mb-3 ${statusStyles[status]}`}>
+                    {status}
                   </div>
-                  <h4 className="font-black text-slate-900 text-2xl mb-1 group-hover:text-blue-600 transition-colors">{task.title}</h4>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{task.category}</span>
-                    <span className="w-1 h-1 rounded-full bg-slate-300" />
-                    <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{task.frequency}</span>
+                  <h4 className="font-black text-slate-900 text-xl">{task.title}</h4>
+                  <div className="flex gap-4 mt-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">{task.category}</span>
+                    <span className="text-[10px] font-bold text-indigo-400 uppercase">{task.frequency}</span>
                   </div>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-8 border-t lg:border-t-0 pt-6 lg:pt-0">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest">Last Performance</label>
+                
+                <div className="flex gap-4 w-full md:w-auto border-t md:border-t-0 pt-4 md:pt-0">
+                  <div className="flex-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Completion Date</label>
                     <input 
-                      type="date" 
-                      value={task.lastCompletionDate || ''} 
-                      onChange={e => updateTaskStatus(task.id, e.target.value)} 
-                      className="bg-slate-50 border-0 px-4 py-3 rounded-xl font-black text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-600 transition-all w-full md:w-auto" 
+                      type="date"
+                      value={task.lastCompletionDate || ''}
+                      onChange={e => updateTaskStatus(task.id, e.target.value)}
+                      className="w-full bg-slate-50 border-0 p-3 rounded-xl font-black text-sm ring-1 ring-slate-100 focus:ring-2 focus:ring-indigo-600 transition-all"
                     />
                   </div>
-                  
-                  <div className="min-w-[140px] bg-slate-50 px-6 py-4 rounded-[1.5rem] border border-slate-100">
-                    <label className="text-[10px] font-black uppercase text-slate-400 block tracking-widest mb-1">Next Deadline</label>
-                    <p className={`font-mono font-black text-xl tracking-tighter ${
-                      status === 'overdue' ? 'text-red-600' : 
-                      status === 'warning' ? 'text-amber-600' : 
-                      'text-slate-900'
-                    }`}>
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Due Date</label>
+                    <div className="p-3 bg-slate-900 rounded-xl font-mono font-black text-white text-sm text-center">
                       {task.nextDueDate || '---'}
-                    </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -559,5 +513,19 @@ function Matrix({ userTasks, toggleTask, updateTaskStatus }) {
         </div>
       )}
     </div>
+  );
+}
+
+function TabBtn({ active, onClick, label }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`pb-4 text-xs font-black uppercase tracking-widest transition-all relative ${
+        active ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
+      }`}
+    >
+      {label}
+      {active && <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-600 rounded-t-full" />}
+    </button>
   );
 }
