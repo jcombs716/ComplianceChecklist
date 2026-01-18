@@ -10,10 +10,13 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; overflow-x: hidden; }
-        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
-        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #0f172a; }
+        .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(0,0,0,0.05); }
+        .custom-scroll::-webkit-scrollbar { width: 5px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .category-pill { transition: all 0.2s ease; }
+        .category-pill:hover { transform: translateY(-1px); }
     </style>
 </head>
 <body>
@@ -22,7 +25,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
@@ -41,7 +44,7 @@
         window.FirebaseOps = { 
             auth, db, APP_ID, 
             signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, 
-            doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query 
+            doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query, getDocs, writeBatch
         };
     </script>
 
@@ -57,7 +60,7 @@
                         nameAttr: 'data-lucide'
                     });
                 }
-            }, [name]);
+            }, [name, size]);
             return <i ref={iconRef} data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
         };
 
@@ -68,12 +71,71 @@
             const [error, setError] = useState('');
             const [processing, setProcessing] = useState(false);
             
+            const [tasks, setTasks] = useState([]);
+            const [userCompletions, setUserCompletions] = useState({});
+            const [activeCategory, setActiveCategory] = useState('All');
+            const [newTask, setNewTask] = useState({ name: '', category: 'Facilities' });
+
             const emailRef = useRef(null);
             const passwordRef = useRef(null);
 
-            const [tasks, setTasks] = useState([]);
-            const [userCompletions, setUserCompletions] = useState({});
-            const [newTask, setNewTask] = useState({ name: '', code: '' });
+            // Detailed NYS Master List Seeding
+            const masterSeedData = [
+                { category: "Facilities", name: "Building Condition Survey (BCS)" },
+                { category: "Facilities", name: "Annual Visual Inspection (AVI)" },
+                { category: "Facilities", name: "Five-Year Capital Facilities Plan" },
+                { category: "Facilities", name: "Public High School Building Safety Report" },
+                { category: "Facilities", name: "Facility Lease/Rental Compliance" },
+                { category: "Facilities", name: "Playground Safety Certification" },
+                { category: "Facilities", name: "Structural Integrity Review" },
+                { category: "Facilities", name: "Boiler Inspection & Logging" },
+                { category: "Facilities", name: "Elevator/Lift Certification" },
+                { category: "Facilities", name: "HVAC Filter & Ventilation Audit" },
+                { category: "Facilities", name: "ADA Accessibility Walkthrough" },
+                { category: "Fire Safety", name: "Annual Fire Safety Inspection (SED)" },
+                { category: "Fire Safety", name: "Monthly Fire Extinguisher Check" },
+                { category: "Fire Safety", name: "Fire Alarm System Monitoring Cert" },
+                { category: "Fire Safety", name: "Sprinkler System Flow Test" },
+                { category: "Fire Safety", name: "Emergency Lighting Battery Test" },
+                { category: "Fire Safety", name: "Kitchen Hood Suppression Service" },
+                { category: "Fire Safety", name: "Fire Drill Logging (8 required/yr)" },
+                { category: "Fire Safety", name: "Evacuation Route Map Update" },
+                { category: "Fire Safety", name: "Flame Retardancy Certifications" },
+                { category: "Fire Safety", name: "Smoke Detector Sensitivity Test" },
+                { category: "Fire Safety", name: "Occupancy Load Posting Audit" },
+                { category: "Fire Safety", name: "Fire Hydrant Pressure Test" },
+                { category: "Fire Safety", name: "Standpipe System Inspection" },
+                { category: "Fire Safety", name: "Chemical Storage Fire Compliance" },
+                { category: "Fire Safety", name: "Emergency Generator Load Test" },
+                { category: "Fire Safety", name: "Stage Scenery/Curtain Fire Proofing" },
+                { category: "Environmental", name: "Lead in Drinking Water Testing" },
+                { category: "Environmental", name: "AHERA Asbestos 6-Month Surveillance" },
+                { category: "Environmental", name: "AHERA 3-Year Re-inspection" },
+                { category: "Environmental", name: "Integrated Pest Management (IPM) Notice" },
+                { category: "Environmental", name: "Radon Testing Protocol" },
+                { category: "Environmental", name: "PCB Ballast Management" },
+                { category: "Environmental", name: "Underground Storage Tank (UST) Cert" },
+                { category: "Environmental", name: "Hazardous Materials Inventory" },
+                { category: "Environmental", name: "Mercury-Added Products Audit" },
+                { category: "Environmental", name: "Waste Manifest Maintenance" },
+                { category: "Environmental", name: "Indoor Air Quality (IAQ) Profile" },
+                { category: "Health & Safety", name: "SAVE Act - Building Level Safety Plan" },
+                { category: "Health & Safety", name: "SAVE Act - District Level Safety Plan" },
+                { category: "Health & Safety", name: "DASA Coordinator Training Cert" },
+                { category: "Health & Safety", name: "Automated External Defibrillator (AED) Check" },
+                { category: "Health & Safety", name: "Right-to-Know/GHS Training" },
+                { category: "Health & Safety", name: "Bloodborne Pathogens Protocol" },
+                { category: "Health & Safety", name: "School Medical Officer Appointment" },
+                { category: "Admin/Transportation", name: "DOT Bus Inspection Records" },
+                { category: "Admin/Transportation", name: "Bus Driver 19A Compliance" },
+                { category: "Admin/Transportation", name: "Student Transportation Safety Drills" },
+                { category: "Admin/Transportation", name: "Drug/Alcohol Random Testing Pool" },
+                { category: "Admin/Transportation", name: "Master Route Efficiency Report" },
+                { category: "Admin/Transportation", name: "Contractor Insurance Verification" },
+                { category: "Admin/Transportation", name: "Fuel Station EPA Leak Detection" }
+            ];
+
+            const categories = ["All", "Facilities", "Fire Safety", "Environmental", "Health & Safety", "Admin/Transportation"];
 
             useEffect(() => {
                 const checkFirebase = setInterval(() => {
@@ -94,7 +156,9 @@
 
                 const qTasks = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks');
                 const unsubTasks = fb.onSnapshot(qTasks, (snap) => {
-                    setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    const loadedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setTasks(loadedTasks);
+                    if (loadedTasks.length === 0) seedInitialData();
                 });
 
                 const qUser = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions');
@@ -107,55 +171,42 @@
                 return () => { unsubTasks(); unsubUser(); };
             }, [user]);
 
+            const seedInitialData = async () => {
+                const fb = window.FirebaseOps;
+                const batch = fb.writeBatch(fb.db);
+                masterSeedData.forEach(item => {
+                    const ref = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks'));
+                    batch.set(ref, { ...item, createdAt: fb.serverTimestamp() });
+                });
+                await batch.commit();
+            };
+
             const handleAuth = async (mode) => {
                 const fb = window.FirebaseOps;
                 const emailVal = emailRef.current.value.trim();
                 const passVal = passwordRef.current.value.trim();
-
-                if (!emailVal || !passVal) {
-                    setError('Entry required in all fields.');
-                    return;
-                }
-
-                setError('');
+                if (!emailVal || !passVal) return setError('All fields required');
                 setProcessing(true);
-
                 try {
-                    if (mode === 'login') {
-                        await fb.signInWithEmailAndPassword(fb.auth, emailVal, passVal);
-                    } else {
-                        await fb.createUserWithEmailAndPassword(fb.auth, emailVal, passVal);
-                    }
-                } catch (err) {
-                    console.error("Auth Failure:", err.code);
-                    if (err.code === 'auth/invalid-email') setError("Invalid email format. Use name@domain.com");
-                    else if (err.code === 'auth/weak-password') setError("Password must be at least 6 characters.");
-                    else setError(err.message.replace("Firebase: ", ""));
-                } finally {
-                    setProcessing(false);
-                }
+                    if (mode === 'login') await fb.signInWithEmailAndPassword(fb.auth, emailVal, passVal);
+                    else await fb.createUserWithEmailAndPassword(fb.auth, emailVal, passVal);
+                } catch (err) { setError(err.message.replace("Firebase: ", "")); }
+                finally { setProcessing(false); }
             };
 
             const toggleTask = async (taskId) => {
-                if (!user || !window.FirebaseOps) return;
                 const fb = window.FirebaseOps;
                 const docRef = fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions', `task_${taskId}`);
-                if (userCompletions[taskId]) {
-                    await fb.deleteDoc(docRef);
-                } else {
-                    await fb.setDoc(docRef, { taskId, timestamp: fb.serverTimestamp() });
-                }
+                if (userCompletions[taskId]) await fb.deleteDoc(docRef);
+                else await fb.setDoc(docRef, { taskId, timestamp: fb.serverTimestamp() });
             };
 
             const addMasterTask = async () => {
-                if (!newTask.name || !window.FirebaseOps) return;
+                if (!newTask.name) return;
                 const fb = window.FirebaseOps;
-                const id = Date.now().toString();
-                await fb.setDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks', id), {
-                    ...newTask,
-                    createdAt: fb.serverTimestamp()
-                });
-                setNewTask({ name: '', code: '' });
+                const ref = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks'));
+                await fb.setDoc(ref, { ...newTask, createdAt: fb.serverTimestamp() });
+                setNewTask({ ...newTask, name: '' });
             };
 
             const deleteMasterTask = async (id) => {
@@ -163,147 +214,189 @@
             };
 
             if (authLoading) return (
-                <div className="h-screen flex flex-col items-center justify-center font-black text-blue-600 gap-4">
-                    <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    <span className="tracking-widest uppercase text-[10px]">Verifying Credentials...</span>
+                <div className="h-screen flex items-center justify-center bg-slate-900">
+                    <div className="text-center animate-pulse">
+                        <Icon name="landmark" size={48} className="text-blue-500 mx-auto mb-4" />
+                        <p className="text-blue-400 font-black tracking-widest text-[10px] uppercase">Connecting to SED Ledger...</p>
+                    </div>
                 </div>
             );
 
-            if (!user) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-                        <div className="max-w-md w-full glass p-10 rounded-[3rem] card-shadow border border-white">
-                            <div className="text-center mb-8">
-                                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl">
-                                    <Icon name="shield-check" size={32} className="text-white" />
-                                </div>
-                                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">Compliance Login</h1>
-                                <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-2">NYS Secure Gateway</p>
+            if (!user) return (
+                <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+                    <div className="max-w-md w-full bg-white p-12 rounded-[3.5rem] shadow-2xl border border-slate-100">
+                        <div className="text-center mb-10">
+                            <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-200">
+                                <Icon name="shield-check" size={32} className="text-white" />
                             </div>
-                            
-                            <div className="space-y-4">
-                                {error && (
-                                    <div className="p-4 bg-red-50 border border-red-100 text-red-600 text-[10px] font-bold rounded-2xl uppercase text-center">
-                                        {error}
-                                    </div>
-                                )}
-                                <input 
-                                    ref={emailRef}
-                                    className="w-full p-4 bg-slate-100 border-none rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
-                                    placeholder="Email Address" 
-                                    type="text" 
-                                />
-                                <input 
-                                    ref={passwordRef}
-                                    className="w-full p-4 bg-slate-100 border-none rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
-                                    placeholder="Password" 
-                                    type="password" 
-                                />
-                                <div className="grid grid-cols-2 gap-3 pt-2">
-                                    <button 
-                                        disabled={processing}
-                                        onClick={() => handleAuth('login')} 
-                                        className="bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all disabled:opacity-50"
-                                    >
-                                        {processing ? '...' : 'Sign In'}
-                                    </button>
-                                    <button 
-                                        disabled={processing}
-                                        onClick={() => handleAuth('signup')} 
-                                        className="bg-slate-900 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all disabled:opacity-50"
-                                    >
-                                        Create
-                                    </button>
-                                </div>
+                            <h1 className="text-3xl font-black text-slate-900 tracking-tight">NY Compliance</h1>
+                            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em] mt-3">School District Operations Portal</p>
+                        </div>
+                        <div className="space-y-4">
+                            {error && <div className="p-4 bg-red-50 text-red-600 text-[10px] font-black rounded-2xl uppercase border border-red-100 text-center">{error}</div>}
+                            <input ref={emailRef} className="w-full p-5 bg-slate-50 rounded-2xl text-sm font-semibold outline-none focus:ring-2 ring-blue-500" placeholder="District Email" />
+                            <input ref={passwordRef} type="password" className="w-full p-5 bg-slate-50 rounded-2xl text-sm font-semibold outline-none focus:ring-2 ring-blue-500" placeholder="Password" />
+                            <div className="grid grid-cols-2 gap-4 pt-4">
+                                <button onClick={() => handleAuth('login')} disabled={processing} className="bg-blue-600 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all">Sign In</button>
+                                <button onClick={() => handleAuth('signup')} disabled={processing} className="bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all">Register</button>
                             </div>
                         </div>
                     </div>
-                );
-            }
+                </div>
+            );
 
-            const progress = tasks.length ? Math.round((Object.keys(userCompletions).length / tasks.length) * 100) : 0;
+            const filteredTasks = activeCategory === 'All' ? tasks : tasks.filter(t => t.category === activeCategory);
+            const totalInView = filteredTasks.length;
+            const completedInView = filteredTasks.filter(t => userCompletions[t.id]).length;
+            const globalProgress = tasks.length ? Math.round((Object.keys(userCompletions).length / tasks.length) * 100) : 0;
 
             return (
-                <div className="min-h-screen pb-20">
-                    <nav className="p-6 lg:px-12 flex justify-between items-center max-w-7xl mx-auto">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg">
-                                <Icon name="shield-check" size={20} className="text-white" />
-                            </div>
-                            <h2 className="font-black uppercase tracking-tighter text-lg leading-none">NY Compliance</h2>
-                        </div>
+                <div className="min-h-screen flex flex-col bg-slate-50">
+                    <nav className="sticky top-0 z-50 glass px-8 py-5 flex justify-between items-center">
                         <div className="flex items-center gap-4">
-                            <span className="text-xs font-bold text-slate-800 hidden sm:block">{user.email}</span>
-                            <button onClick={() => window.FirebaseOps.signOut(window.FirebaseOps.auth)} className="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 transition-colors">
-                                <Icon name="log-out" size={18} />
+                            <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-100">
+                                <Icon name="landmark" size={20} />
+                            </div>
+                            <div>
+                                <h2 className="font-black text-xl tracking-tighter uppercase leading-none">NY Compliance</h2>
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Master Compliance Ledger</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                            <div className="hidden md:block text-right">
+                                <p className="text-[10px] font-black uppercase text-slate-400">Authenticated Agent</p>
+                                <p className="text-xs font-bold text-slate-900">{user.email}</p>
+                            </div>
+                            <button onClick={() => window.FirebaseOps.signOut(window.FirebaseOps.auth)} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-100 transition-all">
+                                <Icon name="log-out" size={20} />
                             </button>
                         </div>
                     </nav>
 
-                    <main className="max-w-7xl mx-auto px-6 lg:px-12 grid grid-cols-1 lg:grid-cols-12 gap-10">
-                        <div className="lg:col-span-8">
-                            <div className="flex items-center justify-between mb-8">
-                                <h3 className="font-black uppercase text-xs text-slate-500 tracking-[0.2em]">Mandate Ledger</h3>
-                                <div className="h-px flex-1 bg-slate-200 mx-4"></div>
-                                <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-4 py-1.5 rounded-full uppercase tracking-widest">{tasks.length} Items</span>
+                    <main className="flex-1 max-w-7xl mx-auto w-full p-6 lg:p-12">
+                        {/* Stats Dashboard */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+                            <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden group">
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-6">District Score</h4>
+                                <div className="flex items-baseline gap-2 mb-4">
+                                    <span className="text-6xl font-black tracking-tighter">{globalProgress}</span>
+                                    <span className="text-xl font-black text-blue-500">%</span>
+                                </div>
+                                <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+                                    <div className="bg-blue-500 h-full transition-all duration-1000" style={{width: `${globalProgress}%`}}></div>
+                                </div>
+                                <Icon name="activity" size={80} className="absolute -right-4 -bottom-4 text-white/5 group-hover:text-white/10 transition-all" />
                             </div>
                             
-                            <div className="space-y-4">
-                                {tasks.map(task => (
-                                    <div key={task.id} className={`group bg-white p-6 rounded-[2rem] flex items-center justify-between card-shadow border-2 transition-all ${userCompletions[task.id] ? 'border-emerald-100' : 'border-transparent'}`}>
-                                        <div className="flex items-center gap-6">
-                                            <button 
-                                                onClick={() => toggleTask(task.id)}
-                                                className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
-                                            >
-                                                <Icon name="check-circle-2" size={28} />
-                                            </button>
-                                            <div>
-                                                <p className={`font-black text-sm uppercase tracking-tight ${userCompletions[task.id] ? 'text-slate-300 line-through' : 'text-slate-800'}`}>{task.name}</p>
-                                                <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">{task.code || 'SED-REF'}</span>
-                                            </div>
-                                        </div>
-                                        <button onClick={() => deleteMasterTask(task.id)} className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-100 hover:bg-red-50 hover:text-red-500 transition-all">
-                                            <Icon name="trash-2" size={16} />
-                                        </button>
-                                    </div>
-                                ))}
+                            <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm flex flex-col justify-between">
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Active Mandates</h4>
+                                <div className="flex items-center justify-between mt-4">
+                                    <span className="text-5xl font-black text-slate-900">{tasks.length}</span>
+                                    <Icon name="layers" size={40} className="text-slate-100" />
+                                </div>
+                            </div>
+
+                            <div className="bg-blue-600 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100">
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-200 mb-6">Compliance Target</h4>
+                                <p className="text-lg font-bold leading-tight">All SED 2024-2025 Regular Inspections & Filings</p>
+                                <div className="mt-6 flex items-center gap-2">
+                                    <Icon name="calendar" size={14} className="text-blue-200" />
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-blue-200">Due Q4 2025</span>
+                                </div>
                             </div>
                         </div>
 
-                        <div className="lg:col-span-4 space-y-6">
-                            <div className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl overflow-hidden relative">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-8">District Progress</h4>
-                                <div className="flex items-baseline gap-2 mb-4">
-                                    <span className="text-7xl font-black tracking-tighter">{progress}</span>
-                                    <span className="text-xl font-black text-blue-500">%</span>
-                                </div>
-                                <div className="w-full bg-white/10 h-3 rounded-full overflow-hidden">
-                                    <div className="bg-blue-500 h-full transition-all duration-1000" style={{width: `${progress}%`}}></div>
-                                </div>
+                        {/* Category Filter */}
+                        <div className="flex flex-wrap gap-2 mb-8 items-center">
+                            <Icon name="filter" size={14} className="text-slate-400 mr-2" />
+                            {categories.map(cat => (
+                                <button 
+                                    key={cat} 
+                                    onClick={() => setActiveCategory(cat)}
+                                    className={`category-pill px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeCategory === cat ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:border-blue-200'}`}
+                                >
+                                    {cat}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                            {/* Ledger List */}
+                            <div className="lg:col-span-8 space-y-6">
+                                {filteredTasks.length === 0 ? (
+                                    <div className="bg-white rounded-[3rem] p-20 text-center border border-slate-100 shadow-sm">
+                                        <Icon name="search-x" size={48} className="text-slate-200 mx-auto mb-4" />
+                                        <p className="text-slate-400 font-bold">No tasks found in this category.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {filteredTasks.sort((a,b) => a.category.localeCompare(b.category)).map(task => (
+                                            <div key={task.id} className={`group p-6 rounded-[2.2rem] bg-white border-2 flex items-center justify-between transition-all ${userCompletions[task.id] ? 'border-emerald-500 bg-emerald-50/20' : 'border-white hover:border-slate-200 shadow-sm'}`}>
+                                                <div className="flex items-center gap-6">
+                                                    <button 
+                                                        onClick={() => toggleTask(task.id)}
+                                                        className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
+                                                    >
+                                                        <Icon name={userCompletions[task.id] ? "check-circle-2" : "circle"} size={28} />
+                                                    </button>
+                                                    <div>
+                                                        <p className={`font-extrabold text-base tracking-tight ${userCompletions[task.id] ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                                                            {task.name}
+                                                        </p>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-tighter">{task.category}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => deleteMasterTask(task.id)} className="opacity-0 group-hover:opacity-100 p-3 text-slate-300 hover:text-red-500 transition-opacity">
+                                                    <Icon name="trash-2" size={16} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="bg-white rounded-[3rem] p-10 card-shadow border border-slate-100">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">Add Requirement</h4>
-                                <div className="space-y-4">
-                                    <input 
-                                        className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-none outline-none" 
-                                        placeholder="Title..." 
-                                        value={newTask.name}
-                                        onChange={e => setNewTask({...newTask, name: e.target.value})}
-                                    />
-                                    <input 
-                                        className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-none outline-none" 
-                                        placeholder="Reference Code..." 
-                                        value={newTask.code}
-                                        onChange={e => setNewTask({...newTask, code: e.target.value})}
-                                    />
-                                    <button 
-                                        onClick={addMasterTask}
-                                        className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all"
-                                    >
-                                        Update Ledger
-                                    </button>
+                            {/* Sidebar Tool */}
+                            <div className="lg:col-span-4 sticky top-28 space-y-6">
+                                <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm">
+                                    <div className="flex items-center gap-3 mb-6">
+                                        <Icon name="plus-circle" size={18} className="text-blue-600" />
+                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em]">Add Mandate</h4>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block ml-1">Title</label>
+                                            <input 
+                                                className="w-full p-5 bg-slate-50 rounded-2xl text-xs font-bold outline-none ring-blue-500 focus:ring-2" 
+                                                placeholder="Requirement Name" 
+                                                value={newTask.name}
+                                                onChange={e => setNewTask({...newTask, name: e.target.value})}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block ml-1">Category</label>
+                                            <select 
+                                                className="w-full p-5 bg-slate-50 rounded-2xl text-xs font-bold outline-none ring-blue-500 focus:ring-2 appearance-none"
+                                                value={newTask.category}
+                                                onChange={e => setNewTask({...newTask, category: e.target.value})}
+                                            >
+                                                {categories.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                        </div>
+                                        <button 
+                                            onClick={addMasterTask}
+                                            className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-200"
+                                        >
+                                            Update Master List
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="p-8 bg-slate-100/50 rounded-[2.5rem] border border-dashed border-slate-300">
+                                    <p className="text-[10px] font-bold text-slate-500 text-center leading-relaxed">
+                                        Master list changes are synchronized across all district users. Check items to mark as completed for your account.
+                                    </p>
                                 </div>
                             </div>
                         </div>
