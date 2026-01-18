@@ -1,412 +1,441 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NY School Compliance Ledger</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #0f172a; }
-        .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(0,0,0,0.05); }
-        .custom-scroll::-webkit-scrollbar { width: 5px; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .category-pill { transition: all 0.2s ease; }
-        .category-pill:hover { transform: translateY(-1px); }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  signInWithCustomToken,
+  signOut 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  collection, 
+  onSnapshot, 
+  serverTimestamp, 
+  deleteDoc, 
+  writeBatch
+} from 'firebase/firestore';
+import { 
+  ShieldCheck, 
+  Landmark, 
+  LogOut, 
+  Activity, 
+  Layers, 
+  Calendar, 
+  SearchX, 
+  CheckCircle2, 
+  Circle, 
+  Trash2, 
+  PlusCircle,
+  AlertCircle,
+  Lock,
+  User,
+  Mail,
+  ArrowRight
+} from 'lucide-react';
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+// --- Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'ny-compliance-ledger-v1';
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
-            authDomain: "compliance-checklist-d9c98.firebaseapp.com",
-            projectId: "compliance-checklist-d9c98",
-            storageBucket: "compliance-checklist-d9c98.firebasestorage.app",
-            messagingSenderId: "303424189265",
-            appId: "1:303424189265:web:53767634f420f882fb1970"
-        };
+const CATEGORIES = ["All", "Facilities", "Fire Safety", "Environmental", "Health & Safety", "Admin/Transportation"];
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const APP_ID = 'ny-compliance-v1';
+const MASTER_SEED_DATA = [
+    { category: "Facilities", name: "Building Condition Survey (BCS)" },
+    { category: "Facilities", name: "Annual Visual Inspection (AVI)" },
+    { category: "Facilities", name: "Five-Year Capital Facilities Plan" },
+    { category: "Facilities", name: "Public High School Building Safety Report" },
+    { category: "Facilities", name: "Facility Lease/Rental Compliance" },
+    { category: "Facilities", name: "Playground Safety Certification" },
+    { category: "Facilities", name: "Structural Integrity Review" },
+    { category: "Facilities", name: "Boiler Inspection & Logging" },
+    { category: "Facilities", name: "Elevator/Lift Certification" },
+    { category: "Facilities", name: "HVAC Filter & Ventilation Audit" },
+    { category: "Facilities", name: "ADA Accessibility Walkthrough" },
+    { category: "Fire Safety", name: "Annual Fire Safety Inspection (SED)" },
+    { category: "Fire Safety", name: "Monthly Fire Extinguisher Check" },
+    { category: "Fire Safety", name: "Fire Alarm System Monitoring Cert" },
+    { category: "Fire Safety", name: "Sprinkler System Flow Test" },
+    { category: "Fire Safety", name: "Emergency Lighting Battery Test" },
+    { category: "Fire Safety", name: "Kitchen Hood Suppression Service" },
+    { category: "Fire Safety", name: "Fire Drill Logging (8 required/yr)" },
+    { category: "Fire Safety", name: "Evacuation Route Map Update" },
+    { category: "Fire Safety", name: "Flame Retardancy Certifications" },
+    { category: "Fire Safety", name: "Smoke Detector Sensitivity Test" },
+    { category: "Fire Safety", name: "Occupancy Load Posting Audit" },
+    { category: "Fire Safety", name: "Fire Hydrant Pressure Test" },
+    { category: "Fire Safety", name: "Standpipe System Inspection" },
+    { category: "Fire Safety", name: "Chemical Storage Fire Compliance" },
+    { category: "Fire Safety", name: "Emergency Generator Load Test" },
+    { category: "Fire Safety", name: "Stage Scenery/Curtain Fire Proofing" },
+    { category: "Environmental", name: "Lead in Drinking Water Testing" },
+    { category: "Environmental", name: "AHERA Asbestos 6-Month Surveillance" },
+    { category: "Environmental", name: "AHERA 3-Year Re-inspection" },
+    { category: "Environmental", name: "Integrated Pest Management (IPM) Notice" },
+    { category: "Environmental", name: "Radon Testing Protocol" },
+    { category: "Environmental", name: "PCB Ballast Management" },
+    { category: "Environmental", name: "Underground Storage Tank (UST) Cert" },
+    { category: "Environmental", name: "Hazardous Materials Inventory" },
+    { category: "Environmental", name: "Mercury-Added Products Audit" },
+    { category: "Environmental", name: "Waste Manifest Maintenance" },
+    { category: "Environmental", name: "Indoor Air Quality (IAQ) Profile" },
+    { category: "Health & Safety", name: "SAVE Act - Building Level Safety Plan" },
+    { category: "Health & Safety", name: "SAVE Act - District Level Safety Plan" },
+    { category: "Health & Safety", name: "DASA Coordinator Training Cert" },
+    { category: "Health & Safety", name: "Automated External Defibrillator (AED) Check" },
+    { category: "Health & Safety", name: "Right-to-Know/GHS Training" },
+    { category: "Health & Safety", name: "Bloodborne Pathogens Protocol" },
+    { category: "Health & Safety", name: "School Medical Officer Appointment" },
+    { category: "Admin/Transportation", name: "DOT Bus Inspection Records" },
+    { category: "Admin/Transportation", name: "Bus Driver 19A Compliance" },
+    { category: "Admin/Transportation", name: "Student Transportation Safety Drills" },
+    { category: "Admin/Transportation", name: "Drug/Alcohol Random Testing Pool" },
+    { category: "Admin/Transportation", name: "Master Route Efficiency Report" },
+    { category: "Admin/Transportation", name: "Contractor Insurance Verification" },
+    { category: "Admin/Transportation", name: "Fuel Station EPA Leak Detection" }
+];
 
-        window.FirebaseOps = { 
-            auth, db, APP_ID, 
-            signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, 
-            doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query, getDocs, writeBatch
-        };
-    </script>
+export default function App() {
+    const [user, setUser] = useState(null);
+    const [authLoading, setAuthLoading] = useState(true);
+    const [tasks, setTasks] = useState([]);
+    const [userCompletions, setUserCompletions] = useState({});
+    const [activeCategory, setActiveCategory] = useState('All');
+    const [newTask, setNewTask] = useState({ name: '', category: 'Facilities' });
+    const [error, setError] = useState(null);
+    const [authMode, setAuthMode] = useState('login'); // 'login' or 'signup'
+    const [authForm, setAuthForm] = useState({ email: '', password: '' });
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-        
-        const Icon = ({ name, size = 18, className = "" }) => {
-            const iconRef = useRef(null);
-            useEffect(() => {
-                if (window.lucide && iconRef.current) {
-                    window.lucide.createIcons({
-                        icons: { [name]: window.lucide.icons[name] },
-                        nameAttr: 'data-lucide'
-                    });
-                }
-            }, [name, size]);
-            return <i ref={iconRef} data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
-        };
-
-        function App() {
-            const f = window.FirebaseOps;
-            const [user, setUser] = useState(null);
-            const [authLoading, setAuthLoading] = useState(true);
-            const [error, setError] = useState('');
-            const [processing, setProcessing] = useState(false);
-            
-            const [tasks, setTasks] = useState([]);
-            const [userCompletions, setUserCompletions] = useState({});
-            const [activeCategory, setActiveCategory] = useState('All');
-            const [newTask, setNewTask] = useState({ name: '', category: 'Facilities' });
-
-            const emailRef = useRef(null);
-            const passwordRef = useRef(null);
-
-            // Detailed NYS Master List Seeding
-            const masterSeedData = [
-                { category: "Facilities", name: "Building Condition Survey (BCS)" },
-                { category: "Facilities", name: "Annual Visual Inspection (AVI)" },
-                { category: "Facilities", name: "Five-Year Capital Facilities Plan" },
-                { category: "Facilities", name: "Public High School Building Safety Report" },
-                { category: "Facilities", name: "Facility Lease/Rental Compliance" },
-                { category: "Facilities", name: "Playground Safety Certification" },
-                { category: "Facilities", name: "Structural Integrity Review" },
-                { category: "Facilities", name: "Boiler Inspection & Logging" },
-                { category: "Facilities", name: "Elevator/Lift Certification" },
-                { category: "Facilities", name: "HVAC Filter & Ventilation Audit" },
-                { category: "Facilities", name: "ADA Accessibility Walkthrough" },
-                { category: "Fire Safety", name: "Annual Fire Safety Inspection (SED)" },
-                { category: "Fire Safety", name: "Monthly Fire Extinguisher Check" },
-                { category: "Fire Safety", name: "Fire Alarm System Monitoring Cert" },
-                { category: "Fire Safety", name: "Sprinkler System Flow Test" },
-                { category: "Fire Safety", name: "Emergency Lighting Battery Test" },
-                { category: "Fire Safety", name: "Kitchen Hood Suppression Service" },
-                { category: "Fire Safety", name: "Fire Drill Logging (8 required/yr)" },
-                { category: "Fire Safety", name: "Evacuation Route Map Update" },
-                { category: "Fire Safety", name: "Flame Retardancy Certifications" },
-                { category: "Fire Safety", name: "Smoke Detector Sensitivity Test" },
-                { category: "Fire Safety", name: "Occupancy Load Posting Audit" },
-                { category: "Fire Safety", name: "Fire Hydrant Pressure Test" },
-                { category: "Fire Safety", name: "Standpipe System Inspection" },
-                { category: "Fire Safety", name: "Chemical Storage Fire Compliance" },
-                { category: "Fire Safety", name: "Emergency Generator Load Test" },
-                { category: "Fire Safety", name: "Stage Scenery/Curtain Fire Proofing" },
-                { category: "Environmental", name: "Lead in Drinking Water Testing" },
-                { category: "Environmental", name: "AHERA Asbestos 6-Month Surveillance" },
-                { category: "Environmental", name: "AHERA 3-Year Re-inspection" },
-                { category: "Environmental", name: "Integrated Pest Management (IPM) Notice" },
-                { category: "Environmental", name: "Radon Testing Protocol" },
-                { category: "Environmental", name: "PCB Ballast Management" },
-                { category: "Environmental", name: "Underground Storage Tank (UST) Cert" },
-                { category: "Environmental", name: "Hazardous Materials Inventory" },
-                { category: "Environmental", name: "Mercury-Added Products Audit" },
-                { category: "Environmental", name: "Waste Manifest Maintenance" },
-                { category: "Environmental", name: "Indoor Air Quality (IAQ) Profile" },
-                { category: "Health & Safety", name: "SAVE Act - Building Level Safety Plan" },
-                { category: "Health & Safety", name: "SAVE Act - District Level Safety Plan" },
-                { category: "Health & Safety", name: "DASA Coordinator Training Cert" },
-                { category: "Health & Safety", name: "Automated External Defibrillator (AED) Check" },
-                { category: "Health & Safety", name: "Right-to-Know/GHS Training" },
-                { category: "Health & Safety", name: "Bloodborne Pathogens Protocol" },
-                { category: "Health & Safety", name: "School Medical Officer Appointment" },
-                { category: "Admin/Transportation", name: "DOT Bus Inspection Records" },
-                { category: "Admin/Transportation", name: "Bus Driver 19A Compliance" },
-                { category: "Admin/Transportation", name: "Student Transportation Safety Drills" },
-                { category: "Admin/Transportation", name: "Drug/Alcohol Random Testing Pool" },
-                { category: "Admin/Transportation", name: "Master Route Efficiency Report" },
-                { category: "Admin/Transportation", name: "Contractor Insurance Verification" },
-                { category: "Admin/Transportation", name: "Fuel Station EPA Leak Detection" }
-            ];
-
-            const categories = ["All", "Facilities", "Fire Safety", "Environmental", "Health & Safety", "Admin/Transportation"];
-
-            useEffect(() => {
-                const checkFirebase = setInterval(() => {
-                    if (window.FirebaseOps) {
-                        clearInterval(checkFirebase);
-                        const unsub = window.FirebaseOps.onAuthStateChanged(window.FirebaseOps.auth, (u) => {
-                            setUser(u);
-                            setAuthLoading(false);
-                        });
-                        return () => unsub();
-                    }
-                }, 100);
-            }, []);
-
-            useEffect(() => {
-                if (!user || !window.FirebaseOps) return;
-                const fb = window.FirebaseOps;
-
-                const qTasks = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks');
-                const unsubTasks = fb.onSnapshot(qTasks, (snap) => {
-                    const loadedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setTasks(loadedTasks);
-                    if (loadedTasks.length === 0) seedInitialData();
-                });
-
-                const qUser = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions');
-                const unsubUser = fb.onSnapshot(qUser, (snap) => {
-                    const data = {};
-                    snap.forEach(d => data[d.data().taskId] = true);
-                    setUserCompletions(data);
-                });
-
-                return () => { unsubTasks(); unsubUser(); };
-            }, [user]);
-
-            const seedInitialData = async () => {
-                const fb = window.FirebaseOps;
-                const batch = fb.writeBatch(fb.db);
-                masterSeedData.forEach(item => {
-                    const ref = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks'));
-                    batch.set(ref, { ...item, createdAt: fb.serverTimestamp() });
-                });
-                await batch.commit();
-            };
-
-            const handleAuth = async (mode) => {
-                const fb = window.FirebaseOps;
-                const emailVal = emailRef.current.value.trim();
-                const passVal = passwordRef.current.value.trim();
-                if (!emailVal || !passVal) return setError('All fields required');
-                setProcessing(true);
+    // --- Authentication Logic ---
+    useEffect(() => {
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 try {
-                    if (mode === 'login') await fb.signInWithEmailAndPassword(fb.auth, emailVal, passVal);
-                    else await fb.createUserWithEmailAndPassword(fb.auth, emailVal, passVal);
-                } catch (err) { setError(err.message.replace("Firebase: ", "")); }
-                finally { setProcessing(false); }
-            };
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } catch (e) { console.error("Token sign-in failed", e); }
+            }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, (u) => {
+            setUser(u);
+            setAuthLoading(false);
+        });
+        return () => unsubscribe();
+    }, []);
 
-            const toggleTask = async (taskId) => {
-                const fb = window.FirebaseOps;
-                const docRef = fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions', `task_${taskId}`);
-                if (userCompletions[taskId]) await fb.deleteDoc(docRef);
-                else await fb.setDoc(docRef, { taskId, timestamp: fb.serverTimestamp() });
-            };
+    const handleAuth = async (e) => {
+        e.preventDefault();
+        setError(null);
+        try {
+            if (authMode === 'login') {
+                await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
+            } else {
+                await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
+            }
+        } catch (err) {
+            setError(err.message.replace("Firebase: ", ""));
+        }
+    };
 
-            const addMasterTask = async () => {
-                if (!newTask.name) return;
-                const fb = window.FirebaseOps;
-                const ref = fb.doc(fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks'));
-                await fb.setDoc(ref, { ...newTask, createdAt: fb.serverTimestamp() });
-                setNewTask({ ...newTask, name: '' });
-            };
+    // --- Data Sync Logic ---
+    useEffect(() => {
+        if (!user) return;
 
-            const deleteMasterTask = async (id) => {
-                await window.FirebaseOps.deleteDoc(window.FirebaseOps.doc(window.FirebaseOps.db, 'artifacts', window.FirebaseOps.APP_ID, 'public', 'data', 'master_tasks', id));
-            };
+        const tasksRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_tasks');
+        const unsubTasks = onSnapshot(tasksRef, (snap) => {
+            const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            if (loaded.length === 0) {
+                seedInitialData();
+            } else {
+                setTasks(loaded.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0)));
+            }
+        }, (err) => setError("Ledger sync error: " + err.message));
 
-            if (authLoading) return (
-                <div className="h-screen flex items-center justify-center bg-slate-900">
-                    <div className="text-center animate-pulse">
-                        <Icon name="landmark" size={48} className="text-blue-500 mx-auto mb-4" />
-                        <p className="text-blue-400 font-black tracking-widest text-[10px] uppercase">Connecting to SED Ledger...</p>
-                    </div>
-                </div>
-            );
+        const userRef = collection(db, 'artifacts', appId, 'users', user.uid, 'completions');
+        const unsubUser = onSnapshot(userRef, (snap) => {
+            const data = {};
+            snap.forEach(d => { data[d.data().taskId] = true; });
+            setUserCompletions(data);
+        });
 
-            if (!user) return (
-                <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-                    <div className="max-w-md w-full bg-white p-12 rounded-[3.5rem] shadow-2xl border border-slate-100">
-                        <div className="text-center mb-10">
-                            <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-200">
-                                <Icon name="shield-check" size={32} className="text-white" />
-                            </div>
-                            <h1 className="text-3xl font-black text-slate-900 tracking-tight">NY Compliance</h1>
-                            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em] mt-3">School District Operations Portal</p>
+        return () => { unsubTasks(); unsubUser(); };
+    }, [user]);
+
+    const seedInitialData = async () => {
+        const batch = writeBatch(db);
+        MASTER_SEED_DATA.forEach((item, index) => {
+            const ref = doc(collection(db, 'artifacts', appId, 'public', 'data', 'master_tasks'));
+            batch.set(ref, { ...item, orderIndex: index, createdAt: serverTimestamp() });
+        });
+        await batch.commit();
+    };
+
+    const toggleTask = async (taskId) => {
+        if (!user) return;
+        const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completions', `task_${taskId}`);
+        if (userCompletions[taskId]) {
+            await deleteDoc(docRef);
+        } else {
+            await setDoc(docRef, { taskId, timestamp: serverTimestamp() });
+        }
+    };
+
+    const addMasterTask = async () => {
+        if (!newTask.name.trim() || !user) return;
+        try {
+            const ref = doc(collection(db, 'artifacts', appId, 'public', 'data', 'master_tasks'));
+            await setDoc(ref, { 
+                ...newTask, 
+                orderIndex: tasks.length > 0 ? Math.max(...tasks.map(t => t.orderIndex || 0)) + 1 : 0,
+                createdAt: serverTimestamp() 
+            });
+            setNewTask({ ...newTask, name: '' });
+        } catch (err) {
+            setError("Permission denied or update failed.");
+        }
+    };
+
+    const deleteMasterTask = async (id) => {
+        if (!user) return;
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_tasks', id));
+    };
+
+    // --- Views ---
+
+    if (authLoading) {
+        return (
+            <div className="h-screen flex items-center justify-center bg-slate-900">
+                <Landmark size={48} className="text-blue-500 animate-pulse" />
+            </div>
+        );
+    }
+
+    if (!user) {
+        return (
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+                <div className="max-w-md w-full">
+                    <div className="text-center mb-10">
+                        <div className="bg-blue-600 w-16 h-16 rounded-[2rem] flex items-center justify-center text-white mx-auto mb-6 shadow-2xl shadow-blue-200">
+                            <Landmark size={32} />
                         </div>
-                        <div className="space-y-4">
-                            {error && <div className="p-4 bg-red-50 text-red-600 text-[10px] font-black rounded-2xl uppercase border border-red-100 text-center">{error}</div>}
-                            <input ref={emailRef} className="w-full p-5 bg-slate-50 rounded-2xl text-sm font-semibold outline-none focus:ring-2 ring-blue-500" placeholder="District Email" />
-                            <input ref={passwordRef} type="password" className="w-full p-5 bg-slate-50 rounded-2xl text-sm font-semibold outline-none focus:ring-2 ring-blue-500" placeholder="Password" />
-                            <div className="grid grid-cols-2 gap-4 pt-4">
-                                <button onClick={() => handleAuth('login')} disabled={processing} className="bg-blue-600 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all">Sign In</button>
-                                <button onClick={() => handleAuth('signup')} disabled={processing} className="bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all">Register</button>
-                            </div>
-                        </div>
+                        <h1 className="text-3xl font-black tracking-tighter text-slate-900 uppercase">NY SED LEDGER</h1>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2">Mandatory Registration Required</p>
                     </div>
-                </div>
-            );
 
-            const filteredTasks = activeCategory === 'All' ? tasks : tasks.filter(t => t.category === activeCategory);
-            const totalInView = filteredTasks.length;
-            const completedInView = filteredTasks.filter(t => userCompletions[t.id]).length;
-            const globalProgress = tasks.length ? Math.round((Object.keys(userCompletions).length / tasks.length) * 100) : 0;
-
-            return (
-                <div className="min-h-screen flex flex-col bg-slate-50">
-                    <nav className="sticky top-0 z-50 glass px-8 py-5 flex justify-between items-center">
-                        <div className="flex items-center gap-4">
-                            <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-100">
-                                <Icon name="landmark" size={20} />
+                    <div className="bg-white rounded-[3rem] p-10 shadow-xl shadow-slate-200/50 border border-slate-100">
+                        <form onSubmit={handleAuth} className="space-y-5">
+                            <div>
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1 mb-2 block">Email Address</label>
+                                <div className="relative">
+                                    <Mail className="absolute left-5 top-5 text-slate-300" size={18} />
+                                    <input 
+                                        type="email" required
+                                        className="w-full pl-14 pr-6 py-5 bg-slate-50 rounded-2xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 ring-blue-500 transition-all"
+                                        placeholder="agent@district.edu"
+                                        value={authForm.email}
+                                        onChange={e => setAuthForm({...authForm, email: e.target.value})}
+                                    />
+                                </div>
                             </div>
                             <div>
-                                <h2 className="font-black text-xl tracking-tighter uppercase leading-none">NY Compliance</h2>
-                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Master Compliance Ledger</p>
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1 mb-2 block">Password</label>
+                                <div className="relative">
+                                    <Lock className="absolute left-5 top-5 text-slate-300" size={18} />
+                                    <input 
+                                        type="password" required
+                                        className="w-full pl-14 pr-6 py-5 bg-slate-50 rounded-2xl text-sm font-bold border border-slate-100 outline-none focus:ring-2 ring-blue-500 transition-all"
+                                        placeholder="••••••••"
+                                        value={authForm.password}
+                                        onChange={e => setAuthForm({...authForm, password: e.target.value})}
+                                    />
+                                </div>
                             </div>
-                        </div>
-                        <div className="flex items-center gap-6">
-                            <div className="hidden md:block text-right">
-                                <p className="text-[10px] font-black uppercase text-slate-400">Authenticated Agent</p>
-                                <p className="text-xs font-bold text-slate-900">{user.email}</p>
-                            </div>
-                            <button onClick={() => window.FirebaseOps.signOut(window.FirebaseOps.auth)} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-100 transition-all">
-                                <Icon name="log-out" size={20} />
+
+                            {error && <p className="text-[11px] font-bold text-red-500 bg-red-50 p-4 rounded-xl border border-red-100">{error}</p>}
+
+                            <button className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-blue-600 transition-all shadow-lg flex items-center justify-center gap-3 group">
+                                {authMode === 'login' ? 'Access Ledger' : 'Create Account'}
+                                <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                            </button>
+                        </form>
+
+                        <div className="mt-8 pt-8 border-t border-slate-50 text-center">
+                            <button 
+                                onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+                                className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-blue-600"
+                            >
+                                {authMode === 'login' ? "Don't have an account? Sign Up" : "Already registered? Log In"}
                             </button>
                         </div>
-                    </nav>
-
-                    <main className="flex-1 max-w-7xl mx-auto w-full p-6 lg:p-12">
-                        {/* Stats Dashboard */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-                            <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden group">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-6">District Score</h4>
-                                <div className="flex items-baseline gap-2 mb-4">
-                                    <span className="text-6xl font-black tracking-tighter">{globalProgress}</span>
-                                    <span className="text-xl font-black text-blue-500">%</span>
-                                </div>
-                                <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
-                                    <div className="bg-blue-500 h-full transition-all duration-1000" style={{width: `${globalProgress}%`}}></div>
-                                </div>
-                                <Icon name="activity" size={80} className="absolute -right-4 -bottom-4 text-white/5 group-hover:text-white/10 transition-all" />
-                            </div>
-                            
-                            <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm flex flex-col justify-between">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Active Mandates</h4>
-                                <div className="flex items-center justify-between mt-4">
-                                    <span className="text-5xl font-black text-slate-900">{tasks.length}</span>
-                                    <Icon name="layers" size={40} className="text-slate-100" />
-                                </div>
-                            </div>
-
-                            <div className="bg-blue-600 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-200 mb-6">Compliance Target</h4>
-                                <p className="text-lg font-bold leading-tight">All SED 2024-2025 Regular Inspections & Filings</p>
-                                <div className="mt-6 flex items-center gap-2">
-                                    <Icon name="calendar" size={14} className="text-blue-200" />
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-blue-200">Due Q4 2025</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Category Filter */}
-                        <div className="flex flex-wrap gap-2 mb-8 items-center">
-                            <Icon name="filter" size={14} className="text-slate-400 mr-2" />
-                            {categories.map(cat => (
-                                <button 
-                                    key={cat} 
-                                    onClick={() => setActiveCategory(cat)}
-                                    className={`category-pill px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeCategory === cat ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:border-blue-200'}`}
-                                >
-                                    {cat}
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                            {/* Ledger List */}
-                            <div className="lg:col-span-8 space-y-6">
-                                {filteredTasks.length === 0 ? (
-                                    <div className="bg-white rounded-[3rem] p-20 text-center border border-slate-100 shadow-sm">
-                                        <Icon name="search-x" size={48} className="text-slate-200 mx-auto mb-4" />
-                                        <p className="text-slate-400 font-bold">No tasks found in this category.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        {filteredTasks.sort((a,b) => a.category.localeCompare(b.category)).map(task => (
-                                            <div key={task.id} className={`group p-6 rounded-[2.2rem] bg-white border-2 flex items-center justify-between transition-all ${userCompletions[task.id] ? 'border-emerald-500 bg-emerald-50/20' : 'border-white hover:border-slate-200 shadow-sm'}`}>
-                                                <div className="flex items-center gap-6">
-                                                    <button 
-                                                        onClick={() => toggleTask(task.id)}
-                                                        className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
-                                                    >
-                                                        <Icon name={userCompletions[task.id] ? "check-circle-2" : "circle"} size={28} />
-                                                    </button>
-                                                    <div>
-                                                        <p className={`font-extrabold text-base tracking-tight ${userCompletions[task.id] ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
-                                                            {task.name}
-                                                        </p>
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded uppercase tracking-tighter">{task.category}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <button onClick={() => deleteMasterTask(task.id)} className="opacity-0 group-hover:opacity-100 p-3 text-slate-300 hover:text-red-500 transition-opacity">
-                                                    <Icon name="trash-2" size={16} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Sidebar Tool */}
-                            <div className="lg:col-span-4 sticky top-28 space-y-6">
-                                <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm">
-                                    <div className="flex items-center gap-3 mb-6">
-                                        <Icon name="plus-circle" size={18} className="text-blue-600" />
-                                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em]">Add Mandate</h4>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block ml-1">Title</label>
-                                            <input 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl text-xs font-bold outline-none ring-blue-500 focus:ring-2" 
-                                                placeholder="Requirement Name" 
-                                                value={newTask.name}
-                                                onChange={e => setNewTask({...newTask, name: e.target.value})}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block ml-1">Category</label>
-                                            <select 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl text-xs font-bold outline-none ring-blue-500 focus:ring-2 appearance-none"
-                                                value={newTask.category}
-                                                onChange={e => setNewTask({...newTask, category: e.target.value})}
-                                            >
-                                                {categories.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}
-                                            </select>
-                                        </div>
-                                        <button 
-                                            onClick={addMasterTask}
-                                            className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all shadow-lg shadow-slate-200"
-                                        >
-                                            Update Master List
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="p-8 bg-slate-100/50 rounded-[2.5rem] border border-dashed border-slate-300">
-                                    <p className="text-[10px] font-bold text-slate-500 text-center leading-relaxed">
-                                        Master list changes are synchronized across all district users. Check items to mark as completed for your account.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </main>
+                    </div>
                 </div>
-            );
-        }
+            </div>
+        );
+    }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+    const filteredTasks = activeCategory === 'All' ? tasks : tasks.filter(t => t.category === activeCategory);
+    const progressPercent = tasks.length ? Math.round((Object.keys(userCompletions).length / tasks.length) * 100) : 0;
+
+    return (
+        <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+            {/* Nav */}
+            <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-100 px-8 py-5 flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                    <div className="bg-blue-600 p-2.5 rounded-2xl text-white shadow-xl shadow-blue-100">
+                        <Landmark size={22} />
+                    </div>
+                    <div>
+                        <h1 className="font-black text-xl tracking-tighter uppercase leading-none">NY SED Ledger</h1>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Authorized Access Only</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-6">
+                    <div className="hidden md:flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
+                        <User size={14} className="text-blue-500" />
+                        <span className="text-[11px] font-black text-slate-700 truncate max-w-[150px]">{user.email}</span>
+                    </div>
+                    <button onClick={() => signOut(auth)} className="p-3 rounded-2xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all border border-slate-200">
+                        <LogOut size={18} />
+                    </button>
+                </div>
+            </nav>
+
+            <main className="max-w-7xl mx-auto w-full p-6 lg:p-12">
+                {/* Dashboard Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+                    <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-6">Aggregate Compliance</h4>
+                        <div className="flex items-baseline gap-2 mb-4">
+                            <span className="text-6xl font-black tracking-tighter">{progressPercent}</span>
+                            <span className="text-xl font-black text-blue-500">%</span>
+                        </div>
+                        <div className="w-full bg-white/10 h-2.5 rounded-full overflow-hidden">
+                            <div className="bg-blue-500 h-full transition-all duration-1000" style={{width: `${progressPercent}%`}}></div>
+                        </div>
+                        <Activity size={100} className="absolute -right-6 -bottom-6 text-white/5" />
+                    </div>
+
+                    <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 shadow-sm flex flex-col justify-between">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Mandates</h4>
+                        <div className="flex items-center justify-between">
+                            <span className="text-5xl font-black">{tasks.length}</span>
+                            <Layers size={40} className="text-slate-100" />
+                        </div>
+                        <p className="text-xs font-bold text-slate-400 mt-4">Active Legislative Cycle</p>
+                    </div>
+
+                    <div className="bg-blue-600 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-200 mb-6">System Status</h4>
+                        <p className="text-lg font-extrabold leading-tight">Secure Database Connected</p>
+                        <div className="mt-6 flex items-center gap-2 bg-blue-500/30 w-fit px-4 py-2 rounded-xl">
+                            <ShieldCheck size={14} />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-white">Encrypted</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-wrap gap-2 mb-10 overflow-x-auto pb-2">
+                    {CATEGORIES.map(cat => (
+                        <button 
+                            key={cat} 
+                            onClick={() => setActiveCategory(cat)}
+                            className={`whitespace-nowrap px-7 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${activeCategory === cat ? 'bg-slate-900 text-white shadow-lg' : 'bg-white border border-slate-200 text-slate-400 hover:border-blue-300'}`}
+                        >
+                            {cat}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+                    <div className="lg:col-span-8 space-y-4">
+                        {filteredTasks.length === 0 ? (
+                            <div className="bg-white rounded-[3rem] p-24 text-center border border-slate-100">
+                                <SearchX size={54} className="text-slate-200 mx-auto mb-6" />
+                                <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No records found</p>
+                            </div>
+                        ) : (
+                            filteredTasks.map(task => (
+                                <div key={task.id} className={`group p-6 rounded-[2.5rem] bg-white border-2 flex items-center justify-between transition-all ${userCompletions[task.id] ? 'border-emerald-500 bg-emerald-50/10' : 'border-white hover:border-slate-200 shadow-sm'}`}>
+                                    <div className="flex items-center gap-6">
+                                        <button 
+                                            onClick={() => toggleTask(task.id)}
+                                            className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all shadow-sm ${userCompletions[task.id] ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
+                                        >
+                                            {userCompletions[task.id] ? <CheckCircle2 size={30} /> : <Circle size={30} />}
+                                        </button>
+                                        <div>
+                                            <p className={`font-black text-base tracking-tight leading-tight ${userCompletions[task.id] ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                                                {task.name}
+                                            </p>
+                                            <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg uppercase tracking-tighter mt-2 inline-block">
+                                                {task.category}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => deleteMasterTask(task.id)} className="opacity-0 group-hover:opacity-100 p-4 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all">
+                                        <Trash2 size={18} />
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+
+                    <div className="lg:col-span-4 sticky top-28 space-y-6">
+                        <div className="bg-white rounded-[2.5rem] p-10 border border-slate-100 shadow-xl shadow-slate-200/50">
+                            <div className="flex items-center gap-3 mb-8">
+                                <PlusCircle size={20} className="text-blue-600" />
+                                <h4 className="text-[11px] font-black uppercase tracking-widest">New Mandate Entry</h4>
+                            </div>
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-3 block ml-1">Title</label>
+                                    <input 
+                                        className="w-full p-5 bg-slate-50 rounded-[1.5rem] text-xs font-bold outline-none ring-blue-500 focus:ring-2 border border-slate-100" 
+                                        placeholder="Requirement Name..." 
+                                        value={newTask.name}
+                                        onChange={e => setNewTask({...newTask, name: e.target.value})}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-3 block ml-1">Category</label>
+                                    <div className="relative">
+                                        <select 
+                                            className="w-full p-5 bg-slate-50 rounded-[1.5rem] text-xs font-bold outline-none ring-blue-500 focus:ring-2 appearance-none border border-slate-100"
+                                            value={newTask.category}
+                                            onChange={e => setNewTask({...newTask, category: e.target.value})}
+                                        >
+                                            {CATEGORIES.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                        <Layers size={14} className="absolute right-5 top-5 text-slate-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={addMasterTask}
+                                    className="w-full bg-slate-900 text-white p-5 rounded-[1.5rem] font-black uppercase text-[10px] tracking-[0.2em] hover:bg-blue-600 transition-all shadow-lg active:scale-[0.98]"
+                                >
+                                    Add New Mandate
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-8 bg-blue-50 rounded-[2.5rem] border border-blue-100">
+                            <div className="flex gap-4 items-start">
+                                <ShieldCheck size={24} className="text-blue-600 shrink-0" />
+                                <p className="text-[10px] font-bold text-blue-900 leading-relaxed">
+                                    Your personal progress is automatically saved to your account.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    );
+}
