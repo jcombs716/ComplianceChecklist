@@ -11,11 +11,9 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; overflow-x: hidden; }
         .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
         .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
-        /* Prevent Lucide from showing raw icons before hydration */
-        [data-lucide] { width: 1.25rem; height: 1.25rem; display: inline-block; vertical-align: middle; }
     </style>
 </head>
 <body>
@@ -32,8 +30,7 @@
             projectId: "compliance-checklist-d9c98",
             storageBucket: "compliance-checklist-d9c98.firebasestorage.app",
             messagingSenderId: "303424189265",
-            appId: "1:303424189265:web:53767634f420f882fb1970",
-            measurementId: "G-QKV1EDXYP4"
+            appId: "1:303424189265:web:53767634f420f882fb1970"
         };
 
         const app = initializeApp(firebaseConfig);
@@ -51,7 +48,6 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // Robust Icon Component for Lucide
         const Icon = ({ name, size = 18, className = "" }) => {
             const iconRef = useRef(null);
             useEffect(() => {
@@ -69,50 +65,55 @@
             const f = window.FirebaseOps;
             const [user, setUser] = useState(null);
             const [authLoading, setAuthLoading] = useState(true);
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
             const [error, setError] = useState('');
+            const [processing, setProcessing] = useState(false);
+            
+            const emailRef = useRef(null);
+            const passwordRef = useRef(null);
+
             const [tasks, setTasks] = useState([]);
             const [userCompletions, setUserCompletions] = useState({});
             const [newTask, setNewTask] = useState({ name: '', code: '' });
-            const [processing, setProcessing] = useState(false);
 
             useEffect(() => {
-                if (!f) return;
-                const unsub = f.onAuthStateChanged(f.auth, (u) => {
-                    setUser(u);
-                    setAuthLoading(false);
-                });
-                return unsub;
-            }, [f]);
+                const checkFirebase = setInterval(() => {
+                    if (window.FirebaseOps) {
+                        clearInterval(checkFirebase);
+                        const unsub = window.FirebaseOps.onAuthStateChanged(window.FirebaseOps.auth, (u) => {
+                            setUser(u);
+                            setAuthLoading(false);
+                        });
+                        return () => unsub();
+                    }
+                }, 100);
+            }, []);
 
             useEffect(() => {
-                if (!user || !f) return;
+                if (!user || !window.FirebaseOps) return;
+                const fb = window.FirebaseOps;
 
-                const qTasks = f.collection(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks');
-                const unsubTasks = f.onSnapshot(qTasks, (snap) => {
+                const qTasks = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks');
+                const unsubTasks = fb.onSnapshot(qTasks, (snap) => {
                     setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                }, (err) => console.error("Task load error:", err));
+                });
 
-                const qUser = f.collection(f.db, 'artifacts', f.APP_ID, 'users', user.uid, 'completions');
-                const unsubUser = f.onSnapshot(qUser, (snap) => {
+                const qUser = fb.collection(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions');
+                const unsubUser = fb.onSnapshot(qUser, (snap) => {
                     const data = {};
                     snap.forEach(d => data[d.data().taskId] = true);
                     setUserCompletions(data);
-                }, (err) => console.error("Completions load error:", err));
+                });
 
                 return () => { unsubTasks(); unsubUser(); };
-            }, [user, f]);
+            }, [user]);
 
-            const handleAuth = async (e, mode) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const trimmedEmail = email.trim();
-                const trimmedPass = password.trim();
+            const handleAuth = async (mode) => {
+                const fb = window.FirebaseOps;
+                const emailVal = emailRef.current.value.trim();
+                const passVal = passwordRef.current.value.trim();
 
-                if (!trimmedEmail || !trimmedPass) {
-                    setError('Please enter both email and password.');
+                if (!emailVal || !passVal) {
+                    setError('Entry required in all fields.');
                     return;
                 }
 
@@ -121,119 +122,100 @@
 
                 try {
                     if (mode === 'login') {
-                        await f.signInWithEmailAndPassword(f.auth, trimmedEmail, trimmedPass);
+                        await fb.signInWithEmailAndPassword(fb.auth, emailVal, passVal);
                     } else {
-                        await f.createUserWithEmailAndPassword(f.auth, trimmedEmail, trimmedPass);
+                        await fb.createUserWithEmailAndPassword(fb.auth, emailVal, passVal);
                     }
                 } catch (err) {
-                    console.error("Auth Error:", err.code, err.message);
-                    let userMsg = err.message.replace("Firebase: ", "");
-                    if (err.code === 'auth/invalid-email') userMsg = "The email address is badly formatted.";
-                    if (err.code === 'auth/user-not-found') userMsg = "No account found with this email.";
-                    if (err.code === 'auth/wrong-password') userMsg = "Incorrect password.";
-                    setError(userMsg);
+                    console.error("Auth Failure:", err.code);
+                    if (err.code === 'auth/invalid-email') setError("Invalid email format. Use name@domain.com");
+                    else if (err.code === 'auth/weak-password') setError("Password must be at least 6 characters.");
+                    else setError(err.message.replace("Firebase: ", ""));
                 } finally {
                     setProcessing(false);
                 }
             };
 
             const toggleTask = async (taskId) => {
-                if (!user) return;
-                const docRef = f.doc(f.db, 'artifacts', f.APP_ID, 'users', user.uid, 'completions', `task_${taskId}`);
-                try {
-                    if (userCompletions[taskId]) {
-                        await f.deleteDoc(docRef);
-                    } else {
-                        await f.setDoc(docRef, { taskId, timestamp: f.serverTimestamp() });
-                    }
-                } catch (err) {
-                    console.error("Firestore error:", err);
+                if (!user || !window.FirebaseOps) return;
+                const fb = window.FirebaseOps;
+                const docRef = fb.doc(fb.db, 'artifacts', fb.APP_ID, 'users', user.uid, 'completions', `task_${taskId}`);
+                if (userCompletions[taskId]) {
+                    await fb.deleteDoc(docRef);
+                } else {
+                    await fb.setDoc(docRef, { taskId, timestamp: fb.serverTimestamp() });
                 }
             };
 
             const addMasterTask = async () => {
-                if (!newTask.name || !f) return;
-                try {
-                    const id = Date.now().toString();
-                    await f.setDoc(f.doc(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks', id), {
-                        ...newTask,
-                        createdAt: f.serverTimestamp()
-                    });
-                    setNewTask({ name: '', code: '' });
-                } catch (err) {
-                    console.error("Error adding task:", err);
-                }
+                if (!newTask.name || !window.FirebaseOps) return;
+                const fb = window.FirebaseOps;
+                const id = Date.now().toString();
+                await fb.setDoc(fb.doc(fb.db, 'artifacts', fb.APP_ID, 'public', 'data', 'master_tasks', id), {
+                    ...newTask,
+                    createdAt: fb.serverTimestamp()
+                });
+                setNewTask({ name: '', code: '' });
             };
 
             const deleteMasterTask = async (id) => {
-                try {
-                    await f.deleteDoc(f.doc(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks', id));
-                } catch (err) {
-                    console.error("Error deleting task:", err);
-                }
+                await window.FirebaseOps.deleteDoc(window.FirebaseOps.doc(window.FirebaseOps.db, 'artifacts', window.FirebaseOps.APP_ID, 'public', 'data', 'master_tasks', id));
             };
 
             if (authLoading) return (
-                <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse tracking-widest uppercase text-center p-4">
-                    Establishing Secure Connection...
+                <div className="h-screen flex flex-col items-center justify-center font-black text-blue-600 gap-4">
+                    <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                    <span className="tracking-widest uppercase text-[10px]">Verifying Credentials...</span>
                 </div>
             );
 
             if (!user) {
                 return (
                     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
-                        <div className="max-w-md w-full glass p-10 rounded-[2.5rem] card-shadow border border-white">
+                        <div className="max-w-md w-full glass p-10 rounded-[3rem] card-shadow border border-white">
                             <div className="text-center mb-8">
-                                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-blue-200">
+                                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl">
                                     <Icon name="shield-check" size={32} className="text-white" />
                                 </div>
-                                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">Compliance Portal</h1>
-                                <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-2">NYS District Access</p>
+                                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">Compliance Login</h1>
+                                <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-2">NYS Secure Gateway</p>
                             </div>
-                            <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+                            
+                            <div className="space-y-4">
                                 {error && (
-                                    <div className="p-4 bg-red-50 border border-red-100 text-red-600 text-[10px] font-bold rounded-2xl uppercase text-center animate-bounce">
+                                    <div className="p-4 bg-red-50 border border-red-100 text-red-600 text-[10px] font-bold rounded-2xl uppercase text-center">
                                         {error}
                                     </div>
                                 )}
-                                <div className="space-y-2">
-                                    <input 
-                                        autoComplete="email"
-                                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
-                                        placeholder="Email Address" 
-                                        type="email" 
-                                        value={email}
-                                        onChange={e => setEmail(e.target.value)} 
-                                    />
-                                    <input 
-                                        autoComplete="current-password"
-                                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
-                                        placeholder="Password" 
-                                        type="password" 
-                                        value={password}
-                                        onChange={e => setPassword(e.target.value)} 
-                                    />
-                                </div>
+                                <input 
+                                    ref={emailRef}
+                                    className="w-full p-4 bg-slate-100 border-none rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
+                                    placeholder="Email Address" 
+                                    type="text" 
+                                />
+                                <input 
+                                    ref={passwordRef}
+                                    className="w-full p-4 bg-slate-100 border-none rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all font-medium" 
+                                    placeholder="Password" 
+                                    type="password" 
+                                />
                                 <div className="grid grid-cols-2 gap-3 pt-2">
                                     <button 
                                         disabled={processing}
-                                        onClick={e => handleAuth(e, 'login')} 
-                                        className="bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50"
+                                        onClick={() => handleAuth('login')} 
+                                        className="bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all disabled:opacity-50"
                                     >
                                         {processing ? '...' : 'Sign In'}
                                     </button>
                                     <button 
                                         disabled={processing}
-                                        onClick={e => handleAuth(e, 'signup')} 
+                                        onClick={() => handleAuth('signup')} 
                                         className="bg-slate-900 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all disabled:opacity-50"
                                     >
-                                        Register
+                                        Create
                                     </button>
                                 </div>
-                            </form>
-                            <p className="mt-8 text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-relaxed">
-                                Authorized Personnel Only<br/>Property of NY State School Systems
-                            </p>
+                            </div>
                         </div>
                     </div>
                 );
@@ -245,20 +227,14 @@
                 <div className="min-h-screen pb-20">
                     <nav className="p-6 lg:px-12 flex justify-between items-center max-w-7xl mx-auto">
                         <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-100">
+                            <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg">
                                 <Icon name="shield-check" size={20} className="text-white" />
                             </div>
-                            <div>
-                                <h2 className="font-black uppercase tracking-tighter text-lg leading-none">NY Compliance</h2>
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">District Ledger</span>
-                            </div>
+                            <h2 className="font-black uppercase tracking-tighter text-lg leading-none">NY Compliance</h2>
                         </div>
                         <div className="flex items-center gap-4">
-                            <div className="hidden md:block text-right">
-                                <p className="text-[10px] font-black uppercase text-slate-400 leading-none mb-1">Authenticated</p>
-                                <p className="text-xs font-bold text-slate-800">{user.email}</p>
-                            </div>
-                            <button onClick={() => f.signOut(f.auth)} className="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 transition-colors shadow-sm">
+                            <span className="text-xs font-bold text-slate-800 hidden sm:block">{user.email}</span>
+                            <button onClick={() => window.FirebaseOps.signOut(window.FirebaseOps.auth)} className="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 transition-colors">
                                 <Icon name="log-out" size={18} />
                             </button>
                         </div>
@@ -273,28 +249,18 @@
                             </div>
                             
                             <div className="space-y-4">
-                                {tasks.length === 0 && (
-                                    <div className="bg-white p-16 rounded-[3rem] text-center border-2 border-dashed border-slate-200">
-                                        <Icon name="info" className="mx-auto text-slate-200 mb-4" size={40} />
-                                        <p className="font-black text-slate-300 uppercase text-[10px] tracking-widest">No requirements on file.</p>
-                                    </div>
-                                )}
-
                                 {tasks.map(task => (
-                                    <div key={task.id} className={`group bg-white p-6 rounded-[2rem] flex items-center justify-between card-shadow border-2 transition-all duration-300 ${userCompletions[task.id] ? 'border-emerald-100' : 'border-transparent hover:border-blue-200'}`}>
+                                    <div key={task.id} className={`group bg-white p-6 rounded-[2rem] flex items-center justify-between card-shadow border-2 transition-all ${userCompletions[task.id] ? 'border-emerald-100' : 'border-transparent'}`}>
                                         <div className="flex items-center gap-6">
                                             <button 
                                                 onClick={() => toggleTask(task.id)}
-                                                className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white shadow-inner'}`}
+                                                className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
                                             >
                                                 <Icon name="check-circle-2" size={28} />
                                             </button>
                                             <div>
-                                                <p className={`font-black text-sm uppercase tracking-tight transition-all ${userCompletions[task.id] ? 'text-slate-300 line-through' : 'text-slate-800'}`}>{task.name}</p>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <span className="text-[9px] font-black text-blue-500 uppercase tracking-[0.15em]">{task.code || 'SED-REF'}</span>
-                                                    {userCompletions[task.id] && <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1">• COMPLETED</span>}
-                                                </div>
+                                                <p className={`font-black text-sm uppercase tracking-tight ${userCompletions[task.id] ? 'text-slate-300 line-through' : 'text-slate-800'}`}>{task.name}</p>
+                                                <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest">{task.code || 'SED-REF'}</span>
                                             </div>
                                         </div>
                                         <button onClick={() => deleteMasterTask(task.id)} className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-100 hover:bg-red-50 hover:text-red-500 transition-all">
@@ -306,47 +272,37 @@
                         </div>
 
                         <div className="lg:col-span-4 space-y-6">
-                            <div className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden">
-                                <div className="absolute top-0 right-0 p-8 opacity-10">
-                                    <Icon name="shield-check" size={120} />
-                                </div>
+                            <div className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl overflow-hidden relative">
                                 <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-8">District Progress</h4>
                                 <div className="flex items-baseline gap-2 mb-4">
-                                    <span className="text-7xl font-black leading-none tracking-tighter">{progress}</span>
+                                    <span className="text-7xl font-black tracking-tighter">{progress}</span>
                                     <span className="text-xl font-black text-blue-500">%</span>
                                 </div>
-                                <div className="w-full bg-white/10 h-3 rounded-full overflow-hidden mb-4">
-                                    <div className="bg-blue-500 h-full transition-all duration-1000 ease-out" style={{width: `${progress}%`}}></div>
+                                <div className="w-full bg-white/10 h-3 rounded-full overflow-hidden">
+                                    <div className="bg-blue-500 h-full transition-all duration-1000" style={{width: `${progress}%`}}></div>
                                 </div>
-                                <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Aggregate Compliance Score</p>
                             </div>
 
                             <div className="bg-white rounded-[3rem] p-10 card-shadow border border-slate-100">
-                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">Append Ledger</h4>
-                                <div className="space-y-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2 tracking-widest">Requirement Title</label>
-                                        <input 
-                                            className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-2 border-transparent focus:border-blue-500 outline-none transition-all" 
-                                            placeholder="Mandate description..." 
-                                            value={newTask.name}
-                                            onChange={e => setNewTask({...newTask, name: e.target.value})}
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2 tracking-widest">Regulatory Code</label>
-                                        <input 
-                                            className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-2 border-transparent focus:border-blue-500 outline-none transition-all" 
-                                            placeholder="e.g. PART-100" 
-                                            value={newTask.code}
-                                            onChange={e => setNewTask({...newTask, code: e.target.value})}
-                                        />
-                                    </div>
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">Add Requirement</h4>
+                                <div className="space-y-4">
+                                    <input 
+                                        className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-none outline-none" 
+                                        placeholder="Title..." 
+                                        value={newTask.name}
+                                        onChange={e => setNewTask({...newTask, name: e.target.value})}
+                                    />
+                                    <input 
+                                        className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-none outline-none" 
+                                        placeholder="Reference Code..." 
+                                        value={newTask.code}
+                                        onChange={e => setNewTask({...newTask, code: e.target.value})}
+                                    />
                                     <button 
                                         onClick={addMasterTask}
-                                        className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-[0.98] transition-all mt-4 flex items-center justify-center gap-2 hover:bg-black"
+                                        className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all"
                                     >
-                                        <Icon name="plus" size={16} /> Update Master List
+                                        Update Ledger
                                     </button>
                                 </div>
                             </div>
