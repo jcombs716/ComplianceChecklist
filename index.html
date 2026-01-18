@@ -1,362 +1,282 @@
-import React, { useState, useEffect } from 'react';
-import { initializeApp, getApps } from 'firebase/app';
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  collection, 
-  onSnapshot, 
-  serverTimestamp, 
-  addDoc, 
-  deleteDoc 
-} from 'firebase/firestore';
-import { 
-  ShieldCheck, 
-  CheckCircle2, 
-  Lock, 
-  User, 
-  LogOut, 
-  Megaphone, 
-  Trash2, 
-  AlertCircle, 
-  FileText 
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NY School Compliance Ledger</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-// --- FIREBASE CONFIGURATION ---
-// Restored to use global environment variables instead of process.env to avoid ReferenceError
-const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ny-school-compliance-v1';
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const auth = getAuth(app);
-const db = getFirestore(app);
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [authMode, setAuthMode] = useState('login');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
+        const firebaseConfig = {
+            apiKey: "AIzaSyCZzkoPiWtm3UZfvlt2fPghH1QU33S5yrA",
+            authDomain: "compliance-checklist-d9c98.firebaseapp.com",
+            projectId: "compliance-checklist-d9c98",
+            storageBucket: "compliance-checklist-d9c98.firebasestorage.app",
+            messagingSenderId: "303424189265",
+            appId: "1:303424189265:web:53767634f420f882fb1970",
+            measurementId: "G-QKV1EDXYP4"
+        };
 
-  const [masterTasks, setMasterTasks] = useState([]);
-  const [broadcasts, setBroadcasts] = useState([]);
-  const [userTasks, setUserTasks] = useState({});
-  const [newNotice, setNewNotice] = useState('');
-  const [newMandate, setNewMandate] = useState({ name: '', code: '' });
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const APP_ID = 'ny-compliance-v1';
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      // Admin identification logic
-      setIsAdmin(u && u.email === 'admin@compliance.local');
-      setAuthLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+        window.FirebaseOps = { 
+            auth, db, APP_ID, 
+            signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, 
+            doc, setDoc, collection, onSnapshot, serverTimestamp, deleteDoc, query 
+        };
+    </script>
 
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setErrorMessage('');
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        // Fix for Lucide icons in React 18 production
+        const ShieldCheck = (props) => <i data-lucide="shield-check" {...props}></i>;
+        const CheckCircle2 = (props) => <i data-lucide="check-circle-2" {...props}></i>;
+        const LogOut = (props) => <i data-lucide="log-out" {...props}></i>;
+        const Trash2 = (props) => <i data-lucide="trash-2" {...props}></i>;
+        const Plus = (props) => <i data-lucide="plus" {...props}></i>;
+        const Info = (props) => <i data-lucide="info" {...props}></i>;
 
-    // Admin override for local testing/management
-    if (email === 'admin' && password === 'Admin7890') {
-      try {
-        await signInWithEmailAndPassword(auth, 'admin@compliance.local', 'Admin7890');
-      } catch (err) {
-        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          await createUserWithEmailAndPassword(auth, 'admin@compliance.local', 'Admin7890');
-        } else {
-          setErrorMessage("Admin access error: " + err.message);
-        }
-      }
-      return;
-    }
+        function App() {
+            const f = window.FirebaseOps;
+            const [user, setUser] = useState(null);
+            const [authLoading, setAuthLoading] = useState(true);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [tasks, setTasks] = useState([]);
+            const [userCompletions, setUserCompletions] = useState({});
+            const [newTask, setNewTask] = useState({ name: '', code: '' });
 
-    try {
-      if (authMode === 'login') {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-      }
-    } catch (err) {
-      setErrorMessage(err.message.replace('Firebase:', ''));
-    }
-  };
+            // Initialize Lucide icons whenever the component renders or tasks update
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            });
 
-  useEffect(() => {
-    if (!user) return;
+            useEffect(() => {
+                if (!f) return;
+                const unsub = f.onAuthStateChanged(f.auth, (u) => {
+                    setUser(u);
+                    setAuthLoading(false);
+                });
+                return unsub;
+            }, [f]);
 
-    const masterRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_tasks');
-    const unsubMaster = onSnapshot(masterRef, (snap) => {
-      setMasterTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Master Task Sync Error:", err));
+            useEffect(() => {
+                if (!user || !f) return;
 
-    const noticeRef = collection(db, 'artifacts', appId, 'public', 'data', 'notices');
-    const unsubNotices = onSnapshot(noticeRef, (snap) => {
-      setBroadcasts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Notice Sync Error:", err));
+                const qTasks = f.collection(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks');
+                const unsubTasks = f.onSnapshot(qTasks, (snap) => {
+                    setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                });
 
-    const userTasksRef = collection(db, 'artifacts', appId, 'users', user.uid, 'completions');
-    const unsubUserTasks = onSnapshot(userTasksRef, (snap) => {
-      const completions = {};
-      snap.forEach(doc => completions[doc.data().taskId] = doc.data());
-      setUserTasks(completions);
-    }, (err) => console.error("User Task Sync Error:", err));
+                const qUser = f.collection(f.db, 'artifacts', f.APP_ID, 'users', user.uid, 'completions');
+                const unsubUser = f.onSnapshot(qUser, (snap) => {
+                    const data = {};
+                    snap.forEach(d => data[d.data().taskId] = true);
+                    setUserCompletions(data);
+                });
 
-    return () => { unsubMaster(); unsubNotices(); unsubUserTasks(); };
-  }, [user]);
+                return () => { unsubTasks(); unsubUser(); };
+            }, [user, f]);
 
-  const toggleTask = async (taskId) => {
-    if (!user) return;
-    const docId = `task_${taskId}`;
-    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'completions', docId);
-    if (userTasks[taskId]) {
-      await deleteDoc(docRef);
-    } else {
-      await setDoc(docRef, { 
-        taskId, 
-        completedAt: serverTimestamp(), 
-        status: 'Complete' 
-      });
-    }
-  };
+            const handleAuth = async (e, mode) => {
+                e.preventDefault();
+                setError('');
+                try {
+                    if (mode === 'login') await f.signInWithEmailAndPassword(f.auth, email, password);
+                    else await f.createUserWithEmailAndPassword(f.auth, email, password);
+                } catch (err) {
+                    setError(err.message.replace("Firebase: ", ""));
+                }
+            };
 
-  const pushNotice = async () => {
-    if (!isAdmin || !newNotice) return;
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), {
-      text: newNotice,
-      timestamp: serverTimestamp(),
-      author: 'Admin'
-    });
-    setNewNotice('');
-  };
+            const toggleTask = async (taskId) => {
+                const docRef = f.doc(f.db, 'artifacts', f.APP_ID, 'users', user.uid, 'completions', `task_${taskId}`);
+                if (userCompletions[taskId]) {
+                    await f.deleteDoc(docRef);
+                } else {
+                    await f.setDoc(docRef, { taskId, timestamp: f.serverTimestamp() });
+                }
+            };
 
-  const addMandate = async () => {
-    if (!isAdmin || !newMandate.name) return;
-    const id = Date.now().toString();
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_tasks', id), {
-      ...newMandate,
-      createdAt: serverTimestamp()
-    });
-    setNewMandate({ name: '', code: '' });
-  };
+            const addMasterTask = async () => {
+                if (!newTask.name) return;
+                const id = Date.now().toString();
+                await f.setDoc(f.doc(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks', id), newTask);
+                setNewTask({ name: '', code: '' });
+            };
 
-  if (authLoading) return (
-    <div className="h-screen flex items-center justify-center font-bold text-blue-600 bg-slate-50 uppercase tracking-widest">
-      Initializing System...
-    </div>
-  );
+            if (authLoading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse tracking-widest uppercase text-center p-4">Initializing Ledger...</div>;
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200">
-          <div className="bg-blue-600 p-8 text-white text-center">
-            <h1 className="text-2xl font-black uppercase tracking-tight">NY School Compliance</h1>
-            <p className="text-xs font-medium opacity-80 mt-1 uppercase tracking-wider">Secure Access Portal</p>
-          </div>
-          <form onSubmit={handleAuth} className="p-8 space-y-4">
-            {errorMessage && (
-              <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-lg flex items-center gap-2">
-                <AlertCircle size={14} /> {errorMessage}
-              </div>
-            )}
-            <div className="space-y-3">
-              <div className="relative">
-                <User className="absolute left-3 top-3 text-slate-400" size={18} />
-                <input 
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
-                  placeholder="Email or 'admin'" 
-                  value={email} 
-                  onChange={e => setEmail(e.target.value)} 
-                  required 
-                />
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 text-slate-400" size={18} />
-                <input 
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
-                  type="password" 
-                  placeholder="Password" 
-                  value={password} 
-                  onChange={e => setPassword(e.target.value)} 
-                  required 
-                />
-              </div>
-            </div>
-            <button className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold uppercase tracking-widest hover:bg-blue-700 transition-colors shadow-lg shadow-blue-100">
-              {authMode === 'login' ? 'Enter System' : 'Create Account'}
-            </button>
-            <button 
-              type="button" 
-              onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} 
-              className="w-full text-[10px] font-black uppercase text-slate-400 hover:text-blue-600 transition-colors tracking-widest mt-2"
-            >
-              {authMode === 'login' ? "Need access? Sign Up" : "Back to Login"}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200 p-4 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto flex justify-between items-center px-2">
-          <div>
-            <h1 className="font-black text-slate-900 uppercase tracking-tighter text-xl">Compliance Checklist</h1>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">NYSED Standards Reference</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden sm:block">
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Logged In As</p>
-              <p className="text-xs font-bold text-slate-800">{isAdmin ? 'SYSTEM ADMIN' : user.email}</p>
-            </div>
-            <button onClick={() => signOut(auth)} className="p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all">
-              <LogOut size={20} />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto p-6 space-y-6">
-        {broadcasts.length > 0 && (
-          <div className="space-y-2">
-            {broadcasts.map(note => (
-              <div key={note.id} className="p-4 bg-amber-50 border-l-4 border-amber-500 rounded-2xl text-sm font-medium flex justify-between items-center shadow-sm">
-                <div className="flex items-center gap-3">
-                  <Megaphone size={16} className="text-amber-600" />
-                  <span className="text-slate-800">{note.text}</span>
-                </div>
-                {isAdmin && (
-                  <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notices', note.id))} className="text-amber-200 hover:text-amber-600">
-                    <Trash2 size={14}/>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <h2 className="font-black uppercase text-slate-800 text-sm tracking-widest flex items-center gap-2">
-                <FileText size={18} className="text-blue-600" /> Compliance Ledger
-              </h2>
-              <span className="text-[10px] font-black bg-blue-100 text-blue-700 px-3 py-1 rounded-full uppercase tracking-tighter">
-                {Object.keys(userTasks).length} / {masterTasks.length} Mandates Done
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {masterTasks.length === 0 && (
-                <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-100 text-slate-300 font-bold uppercase text-xs">
-                  No compliance items available
-                </div>
-              )}
-              {masterTasks.map(task => {
-                const isComplete = !!userTasks[task.id];
+            if (!user) {
                 return (
-                  <div key={task.id} className={`bg-white p-5 rounded-3xl flex items-center justify-between border-2 transition-all ${isComplete ? 'border-emerald-50 bg-emerald-50/30' : 'border-white shadow-sm hover:border-blue-100'}`}>
-                    <div className="flex items-center gap-5">
-                      <button 
-                        onClick={() => toggleTask(task.id)} 
-                        className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${isComplete ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-200' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white'}`}
-                      >
-                        <CheckCircle2 size={24} />
-                      </button>
-                      <div>
-                        <p className={`text-base font-bold ${isComplete ? 'text-slate-300 line-through' : 'text-slate-800'}`}>
-                          {task.name}
-                        </p>
-                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">
-                          {task.code || 'SED-GEN-01'}
-                        </p>
-                      </div>
+                    <div className="min-h-screen flex items-center justify-center p-6">
+                        <div className="max-w-md w-full glass p-10 rounded-[2.5rem] card-shadow border border-white">
+                            <div className="text-center mb-8">
+                                <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-blue-200">
+                                    <ShieldCheck className="text-white" size="32" />
+                                </div>
+                                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">Compliance Portal</h1>
+                                <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-2">Secure District Access</p>
+                            </div>
+                            <form className="space-y-4">
+                                {error && <div className="p-4 bg-red-50 border border-red-100 text-red-600 text-[10px] font-bold rounded-2xl uppercase text-center">{error}</div>}
+                                <div className="space-y-2">
+                                    <input className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="Email Address" type="email" onChange={e => setEmail(e.target.value)} />
+                                    <input className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 ring-blue-500 outline-none transition-all" placeholder="Password" type="password" onChange={e => setPassword(e.target.value)} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 pt-2">
+                                    <button onClick={e => handleAuth(e, 'login')} className="bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">Sign In</button>
+                                    <button onClick={e => handleAuth(e, 'signup')} className="bg-slate-900 text-white p-4 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-black transition-all">Register</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                    {isAdmin && (
-                      <button 
-                        onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_tasks', task.id))} 
-                        className="p-3 text-slate-100 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={18}/>
-                      </button>
-                    )}
-                  </div>
                 );
-              })}
-            </div>
-          </div>
+            }
 
-          <div className="space-y-6">
-            <div className="bg-slate-900 p-8 rounded-[2.5rem] text-white h-fit shadow-2xl relative overflow-hidden">
-               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-               <h3 className="font-black uppercase mb-6 text-xs tracking-[0.2em] flex items-center gap-2 border-b border-white/10 pb-4">
-                <ShieldCheck size={18} className="text-blue-400"/> {isAdmin ? 'Admin Console' : 'Compliance Rating'}
-               </h3>
-               
-               {isAdmin ? (
-                 <div className="space-y-4">
-                   <div className="space-y-2">
-                     <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Create Mandate</p>
-                     <input 
-                       className="w-full p-3 bg-white/5 border border-white/10 rounded-2xl text-xs focus:bg-white/10 outline-none" 
-                       placeholder="Task Description" 
-                       value={newMandate.name} 
-                       onChange={e => setNewMandate({...newMandate, name: e.target.value})} 
-                     />
-                     <input 
-                       className="w-full p-3 bg-white/5 border border-white/10 rounded-2xl text-xs focus:bg-white/10 outline-none" 
-                       placeholder="SED Code" 
-                       value={newMandate.code} 
-                       onChange={e => setNewMandate({...newMandate, code: e.target.value})} 
-                     />
-                     <button onClick={addMandate} className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Add to Ledger</button>
-                   </div>
-                   
-                   <div className="space-y-2 pt-6">
-                     <p className="text-[10px] font-black uppercase text-amber-400 tracking-widest">Global Broadcast</p>
-                     <textarea 
-                       className="w-full p-3 bg-white/5 border border-white/10 rounded-2xl text-xs h-24 focus:bg-white/10 outline-none resize-none" 
-                       placeholder="Urgent notice content..." 
-                       value={newNotice} 
-                       onChange={e => setNewNotice(e.target.value)} 
-                     />
-                     <button onClick={pushNotice} className="w-full py-3 bg-amber-600 hover:bg-amber-500 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Push Update</button>
-                   </div>
-                 </div>
-               ) : (
-                 <div className="py-4">
-                   <div className="text-6xl font-black text-blue-400 mb-2 tabular-nums">
-                     {Math.round((Object.keys(userTasks).length / (masterTasks.length || 1)) * 100)}%
-                   </div>
-                   <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Current Rating</p>
-                   <div className="mt-8 pt-8 border-t border-white/10 space-y-4">
-                    <div className="flex justify-between text-[10px] font-bold uppercase">
-                      <span className="text-white/60">Total Mandates</span>
-                      <span>{masterTasks.length}</span>
-                    </div>
-                    <div className="flex justify-between text-[10px] font-bold uppercase">
-                      <span className="text-white/60">Actions Pending</span>
-                      <span>{masterTasks.length - Object.keys(userTasks).length}</span>
-                    </div>
-                   </div>
-                 </div>
-               )}
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
+            const progress = tasks.length ? Math.round((Object.keys(userCompletions).length / tasks.length) * 100) : 0;
+
+            return (
+                <div className="min-h-screen pb-20">
+                    <nav className="p-6 lg:px-12 flex justify-between items-center max-w-7xl mx-auto">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-100">
+                                <ShieldCheck className="text-white" size="20" />
+                            </div>
+                            <div>
+                                <h2 className="font-black uppercase tracking-tighter text-lg leading-none">NY Compliance</h2>
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">District Ledger</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="hidden md:block text-right">
+                                <p className="text-[10px] font-black uppercase text-slate-400 leading-none mb-1">Authenticated As</p>
+                                <p className="text-xs font-bold text-slate-800">{user.email}</p>
+                            </div>
+                            <button onClick={() => f.signOut(f.auth)} className="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-red-500 transition-colors shadow-sm">
+                                <LogOut size="18" />
+                            </button>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-7xl mx-auto px-6 lg:px-12 grid grid-cols-1 lg:grid-cols-12 gap-10">
+                        <div className="lg:col-span-8">
+                            <div className="flex items-center justify-between mb-8">
+                                <h3 className="font-black uppercase text-xs text-slate-500 tracking-[0.2em]">Active Mandate Catalog</h3>
+                                <div className="h-px flex-1 bg-slate-200 mx-4"></div>
+                                <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-4 py-1.5 rounded-full uppercase tracking-widest">{tasks.length} Total</span>
+                            </div>
+                            
+                            <div className="space-y-4">
+                                {tasks.length === 0 && (
+                                    <div className="bg-white p-16 rounded-[3rem] text-center border-2 border-dashed border-slate-200">
+                                        <Info className="mx-auto text-slate-200 mb-4" size="40" />
+                                        <p className="font-black text-slate-300 uppercase text-[10px] tracking-widest">No requirements on file.</p>
+                                    </div>
+                                )}
+
+                                {tasks.map(task => (
+                                    <div key={task.id} className={`group bg-white p-6 rounded-[2rem] flex items-center justify-between card-shadow border-2 transition-all duration-300 ${userCompletions[task.id] ? 'border-emerald-100 opacity-75' : 'border-transparent hover:border-blue-200'}`}>
+                                        <div className="flex items-center gap-6">
+                                            <button 
+                                                onClick={() => toggleTask(task.id)}
+                                                className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${userCompletions[task.id] ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-300 hover:bg-blue-600 hover:text-white shadow-inner'}`}
+                                            >
+                                                <CheckCircle2 size="28" />
+                                            </button>
+                                            <div>
+                                                <p className={`font-black text-sm uppercase tracking-tight transition-all ${userCompletions[task.id] ? 'text-slate-300 line-through' : 'text-slate-800'}`}>{task.name}</p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-[9px] font-black text-blue-500 uppercase tracking-[0.15em]">{task.code || 'MANDATE'}</span>
+                                                    {userCompletions[task.id] && <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1">• COMPLETED</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => f.deleteDoc(f.doc(f.db, 'artifacts', f.APP_ID, 'public', 'data', 'master_tasks', task.id))} className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-100 hover:bg-red-50 hover:text-red-500 transition-all">
+                                            <Trash2 size="16" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-4 space-y-6">
+                            <div className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-8 opacity-10">
+                                    <ShieldCheck size="120" />
+                                </div>
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-8">Overall Compliance</h4>
+                                <div className="flex items-baseline gap-2 mb-4">
+                                    <span className="text-7xl font-black leading-none tracking-tighter">{progress}</span>
+                                    <span className="text-xl font-black text-blue-500">%</span>
+                                </div>
+                                <div className="w-full bg-white/10 h-3 rounded-full overflow-hidden mb-4">
+                                    <div className="bg-blue-500 h-full transition-all duration-1000 ease-out" style={{width: `${progress}%`}}></div>
+                                </div>
+                                <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Calculated by verified completions</p>
+                            </div>
+
+                            <div className="bg-white rounded-[3rem] p-10 card-shadow border border-slate-100">
+                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">New District Mandate</h4>
+                                <div className="space-y-3">
+                                    <div className="space-y-1">
+                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2 tracking-widest">Description</label>
+                                        <input 
+                                            className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-2 border-transparent focus:border-blue-500 outline-none transition-all" 
+                                            placeholder="Requirement Name..." 
+                                            value={newTask.name}
+                                            onChange={e => setNewTask({...newTask, name: e.target.value})}
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-2 tracking-widest">Reference Code</label>
+                                        <input 
+                                            className="w-full p-4 bg-slate-50 rounded-2xl text-xs font-bold border-2 border-transparent focus:border-blue-500 outline-none transition-all" 
+                                            placeholder="e.g. SED-102.4" 
+                                            value={newTask.code}
+                                            onChange={e => setNewTask({...newTask, code: e.target.value})}
+                                        />
+                                    </div>
+                                    <button 
+                                        onClick={addMasterTask}
+                                        className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-[0.98] transition-all mt-4 flex items-center justify-center gap-2"
+                                    >
+                                        <Plus size="16" /> Deploy Requirement
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
