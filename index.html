@@ -1,633 +1,150 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInWithCustomToken, 
-  signInAnonymously,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc,
-  collection, 
-  onSnapshot, 
-  serverTimestamp, 
-  deleteDoc,
-  updateDoc,
-  arrayUnion,
-  query,
-  where
-} from 'firebase/firestore';
-import { 
-  ShieldCheck, 
-  Landmark, 
-  LogOut, 
-  Search, 
-  CheckCircle2, 
-  Circle, 
-  Plus, 
-  FileText, 
-  Calendar, 
-  Settings, 
-  Trash2, 
-  X,
-  Lock,
-  ChevronRight,
-  ChevronLeft,
-  Building2,
-  AlertCircle,
-  PlusCircle,
-  ClipboardList,
-  LayoutDashboard,
-  Bell,
-  HardHat
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYS School Facilities Compliance Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .table-container { overflow-x: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        tr:nth-child(even) { background-color: #f1f5f9; }
+        .badge { padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+        .badge-annual { background-color: #dcfce7; color: #166534; }
+        .badge-periodic { background-color: #fef9c3; color: #854d0e; }
+        .badge-event { background-color: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-slate-900">NYS School District Compliance Matrix</h1>
+            <p class="text-slate-600 mt-2">Comprehensive tracking for Facilities, Fire Safety, Environmental, and Health & Safety requirements.</p>
+        </header>
 
-// --- Firebase Configuration ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'nysed-compliance-v2';
-
-const FREQUENCY_DAYS = {
-  "Daily": 1,
-  "Weekly": 7,
-  "Monthly": 30,
-  "Quarterly": 90,
-  "Semi-Annually": 182,
-  "Annual": 365,
-  "Every 2 Years": 730,
-  "Every 3 Years": 1095,
-  "Every 5 Years": 1825
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState(1); // 1: Auth, 2: District/Buildings, 3: Tasks, 4: Dashboard
-  const [error, setError] = useState(null);
-
-  // App State
-  const [masterTasks, setMasterTasks] = useState([]);
-  const [userTasks, setUserTasks] = useState([]);
-  const [userRecords, setUserRecords] = useState({});
-  const [districts, setDistricts] = useState({ name: '', buildings: [] });
-  
-  // UI State
-  const [view, setView] = useState('onboarding'); // onboarding, dashboard, admin
-  const [activeTab, setActiveTab] = useState('all');
-  const [editingTask, setEditingTask] = useState(null);
-  const [showCustomTaskModal, setShowCustomTaskModal] = useState(false);
-  const [showAdminModal, setShowAdminModal] = useState(false);
-
-  // 1. Auth & Initial Setup (Follows Rule 3)
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        }
-      } catch (e) {
-        console.error("Token auth failed, waiting for user action");
-      }
-    };
-    initAuth();
-    
-    const unsubscribe = onAuthStateChanged(auth, (currUser) => {
-      setUser(currUser);
-      if (!currUser) {
-        setStep(1);
-        setLoading(false);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 2. Load User Profile and Data (Follows Rule 1)
-  useEffect(() => {
-    if (!user) return;
-
-    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
-    const unsubProfile = onSnapshot(profileRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setUserProfile(data);
-        setIsAdmin(data.role === 'admin');
-        setDistricts({ name: data.district || '', buildings: data.buildings || [] });
-        
-        // Navigation Logic based on profile completeness
-        if (data.district && data.buildings?.length > 0) {
-          setStep(4);
-          setView('dashboard');
-        } else {
-          setStep(3);
-        }
-      } else {
-        setStep(3); // New user needs to set up district
-      }
-      setLoading(false);
-    });
-
-    // Master Mandates (Public Data)
-    const masterRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_mandates');
-    const unsubMaster = onSnapshot(masterRef, (snap) => {
-      setMasterTasks(snap.docs.map(d => ({ id: d.id, ...d.data(), isMaster: true })));
-    }, (err) => setError("Failed to load master mandates"));
-
-    // User Custom Tasks
-    const customRef = collection(db, 'artifacts', appId, 'users', user.uid, 'custom_tasks');
-    const unsubCustom = onSnapshot(customRef, (snap) => {
-      setUserTasks(snap.docs.map(d => ({ id: d.id, ...d.data(), isMaster: false })));
-    });
-
-    // Completion Logs
-    const logsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'compliance_logs');
-    const unsubLogs = onSnapshot(logsRef, (snap) => {
-      const logs = {};
-      snap.forEach(d => logs[d.id] = d.data());
-      setUserRecords(logs);
-    });
-
-    return () => {
-      unsubProfile();
-      unsubMaster();
-      unsubCustom();
-      unsubLogs();
-    };
-  }, [user]);
-
-  // --- Actions ---
-
-  const handleAuth = async (e, mode) => {
-    e.preventDefault();
-    setError(null);
-    const email = e.target.email.value;
-    const password = e.target.password.value;
-    try {
-      if (mode === 'signup') {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const saveDistrictInfo = async (e) => {
-    e.preventDefault();
-    if (!user) return;
-    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
-    await setDoc(profileRef, {
-      district: districts.name,
-      buildings: districts.buildings,
-      updatedAt: serverTimestamp(),
-      role: isAdmin ? 'admin' : 'user'
-    }, { merge: true });
-    setStep(4);
-  };
-
-  const addBuilding = (name) => {
-    if (!name) return;
-    setDistricts(prev => ({ ...prev, buildings: [...prev.buildings, name] }));
-  };
-
-  const logCompletion = async (taskId, date, notes) => {
-    if (!user) return;
-    const logRef = doc(db, 'artifacts', appId, 'users', user.uid, 'compliance_logs', taskId);
-    await setDoc(logRef, {
-      lastCompleted: date,
-      notes,
-      updatedAt: serverTimestamp()
-    });
-    setEditingTask(null);
-  };
-
-  const saveCustomTask = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const taskData = Object.fromEntries(formData.entries());
-    const ref = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'custom_tasks'));
-    await setDoc(ref, { ...taskData, createdAt: serverTimestamp() });
-    setShowCustomTaskModal(false);
-  };
-
-  const saveMasterTask = async (e) => {
-    e.preventDefault();
-    if (!isAdmin) return;
-    const formData = new FormData(e.target);
-    const taskData = Object.fromEntries(formData.entries());
-    const ref = doc(collection(db, 'artifacts', appId, 'public', 'data', 'master_mandates'));
-    await setDoc(ref, { ...taskData, createdAt: serverTimestamp() });
-    setShowAdminModal(false);
-  };
-
-  // --- Helpers ---
-
-  const calculateDueDate = (lastDate, frequency) => {
-    if (!lastDate || !frequency) return null;
-    const days = FREQUENCY_DAYS[frequency] || 365;
-    const date = new Date(lastDate);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().split('T')[0];
-  };
-
-  const allVisibleTasks = useMemo(() => {
-    return [...masterTasks, ...userTasks];
-  }, [masterTasks, userTasks]);
-
-  // --- Views ---
-
-  if (loading) return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-6">
-      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-      <p className="font-bold tracking-widest text-xs uppercase opacity-50">Initializing NYSED Ledger</p>
-    </div>
-  );
-
-  // Step 1 & 2: Auth Page
-  if (!user) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200">
-        <div className="p-10">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="bg-blue-600 p-2.5 rounded-2xl text-white">
-              <ShieldCheck size={28} />
-            </div>
-            <div>
-              <h1 className="font-black text-xl uppercase tracking-tighter text-slate-900">Compliance Hub</h1>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">NY State Schools Pre-K-12</p>
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            <form onSubmit={(e) => handleAuth(e, step === 1 ? 'signup' : 'login')}>
-              <h2 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">
-                {step === 1 ? 'Step 1: Create Account' : 'Step 2: Sign In'}
-              </h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Email Address</label>
-                  <input name="email" type="email" required className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 ring-blue-500/20 outline-none transition-all font-bold text-sm" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Password</label>
-                  <input name="password" type="password" required className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 ring-blue-500/20 outline-none transition-all font-bold text-sm" />
-                </div>
-              </div>
-
-              {error && <div className="mt-4 p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2 border border-red-100">
-                <AlertCircle size={14} /> {error}
-              </div>}
-
-              <button type="submit" className="w-full mt-8 bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl hover:bg-black transition-all transform active:scale-[0.98]">
-                {step === 1 ? 'Register District Account' : 'Access Dashboard'}
-              </button>
-            </form>
-
-            <div className="text-center pt-4 border-t border-slate-100">
-              <button 
-                onClick={() => setStep(step === 1 ? 2 : 1)}
-                className="text-blue-600 font-black uppercase text-[10px] tracking-widest hover:underline"
-              >
-                {step === 1 ? 'Already have an account? Sign In' : 'Need an account? Register'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Step 3: District & Buildings
-  if (step === 3) return (
-    <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
-      <div className="max-w-2xl w-full bg-white rounded-[3rem] shadow-xl border border-slate-200 p-12">
-        <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-2">Step 3: District Setup</h2>
-        <p className="text-slate-400 font-medium text-sm mb-10">Define your school district and list every building that requires compliance monitoring.</p>
-        
-        <form onSubmit={saveDistrictInfo} className="space-y-8">
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">School District Name</label>
-            <input 
-              value={districts.name} 
-              onChange={e => setDistricts(p => ({...p, name: e.target.value}))}
-              placeholder="e.g. Ransomville Central School District" 
-              required
-              className="w-full px-6 py-5 bg-slate-50 border border-slate-200 rounded-2xl text-lg font-black text-slate-800 outline-none focus:border-blue-500 transition-colors"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Building List</label>
-            <div className="flex gap-2 mb-4">
-              <input 
-                id="building-input"
-                placeholder="Add Building (e.g. High School)" 
-                className="flex-1 px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold"
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addBuilding(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-              />
-              <button 
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById('building-input');
-                  addBuilding(el.value);
-                  el.value = '';
-                }}
-                className="bg-blue-600 text-white px-6 rounded-2xl font-black uppercase text-[10px] tracking-widest"
-              >
-                Add
-              </button>
-            </div>
+        <div class="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <input type="text" id="searchInput" placeholder="Search tasks, agencies, or laws..." 
+                   class="p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
             
-            <div className="flex flex-wrap gap-2">
-              {districts.buildings.map((b, i) => (
-                <span key={i} className="flex items-center gap-2 bg-slate-100 text-slate-600 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-tight">
-                  <Building2 size={12} /> {b}
-                  <button type="button" onClick={() => setDistricts(p => ({...p, buildings: p.buildings.filter((_, idx) => idx !== i)}))}>
-                    <X size={12} className="text-slate-400 hover:text-red-500" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
+            <select id="categoryFilter" class="p-3 border border-slate-300 rounded-lg outline-none">
+                <option value="">All Categories</option>
+                <option value="Facilities">Facilities</option>
+                <option value="Fire Safety">Fire Safety</option>
+                <option value="Environmental">Environmental</option>
+                <option value="Health & Safety">Health & Safety</option>
+                <option value="Admin/Transportation">Admin/Transportation</option>
+            </select>
 
-          <button type="submit" disabled={!districts.name || districts.buildings.length === 0} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl disabled:opacity-50 mt-10">
-            Generate Task Ledger
-          </button>
-        </form>
-      </div>
+            <div class="flex items-center justify-end text-sm text-slate-500">
+                <span id="rowCount">0</span> items found
+            </div>
+        </div>
+
+        <div class="table-container bg-white">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-slate-800 text-white">
+                    <tr>
+                        <th class="p-4 font-semibold text-sm">Category / Sub</th>
+                        <th class="p-4 font-semibold text-sm">Task</th>
+                        <th class="p-4 font-semibold text-sm">Frequency</th>
+                        <th class="p-4 font-semibold text-sm">Authority</th>
+                        <th class="p-4 font-semibold text-sm">Action Required</th>
+                        <th class="p-4 font-semibold text-sm">Citation</th>
+                    </tr>
+                </thead>
+                <tbody id="complianceBody" class="text-slate-700 text-sm">
+                    <!-- Data injected via JS -->
+                </tbody>
+            </table>
+        </div>
     </div>
-  );
 
-  // Main App (Step 4, 5, Dashboard & Admin)
-  return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-8 py-5 flex justify-between items-center sticky top-0 z-[100]">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="bg-slate-900 p-2 rounded-xl text-white">
-              <Landmark size={20} />
-            </div>
-            <div>
-              <h1 className="font-black text-sm uppercase tracking-tighter leading-none mb-1">{districts.name}</h1>
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Compliance Engine</span>
-                {isAdmin && <span className="text-[8px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-md font-black uppercase flex items-center gap-1">Admin Mode</span>}
-              </div>
-            </div>
-          </div>
-          
-          <nav className="hidden lg:flex bg-slate-100 p-1 rounded-xl">
-            <button onClick={() => setView('dashboard')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${view === 'dashboard' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Dashboard</button>
-            <button onClick={() => setView('ledger')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${view === 'ledger' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Mandate Ledger</button>
-            {isAdmin && <button onClick={() => setView('admin')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${view === 'admin' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>Master Admin</button>}
-          </nav>
-        </div>
+    <script>
+        const complianceData = [
+            { cat: "Facilities", sub: "Structural", task: "Visual Inspection", freq: "Annually", auth: "NYSED", action: "Inspection", by: "Team (incl. Code Official)", cite: "8 NYCRR § 155.4" },
+            { cat: "Facilities", sub: "Structural", task: "Building Condition Survey (BCS)", freq: "Every 5 Years", auth: "NYSED", action: "Survey & Report", by: "Licensed Architect/PE", cite: "8 NYCRR § 155.4" },
+            { cat: "Facilities", sub: "Planning", task: "5-Year Capital Facilities Plan", freq: "Annual Update", auth: "NYSED", action: "Review & Update", by: "BOE / Admin", cite: "8 NYCRR § 155.1" },
+            { cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (High Pressure)", freq: "Annual", auth: "NYS DOL", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204" },
+            { cat: "Facilities", sub: "Mechanical", task: "Boiler Inspection (Low Pressure)", freq: "Every 2 Years", auth: "NYS DOL", action: "Inspection", by: "Authorized Inspector", cite: "Labor Law § 204" },
+            { cat: "Facilities", sub: "Mechanical", task: "Elevator / Chairlift Inspection", freq: "Every 6 Months", auth: "NYS Code Enforcement", action: "Inspection", by: "Licensed Inspector", cite: "PMCNYS § 606.1" },
+            { cat: "Facilities", sub: "Water Systems", task: "Backflow Prevention Test", freq: "Annual", auth: "NYS DOH", action: "Testing", by: "Certified Tester", cite: "10 NYCRR § 5-1.31" },
+            { cat: "Facilities", sub: "Equipment", task: "Gym Bleacher Inspection", freq: "Annual", auth: "NYS Fire Code", action: "Inspection", by: "Qualified Person", cite: "FCNYS § 1029.1.1" },
+            { cat: "Facilities", sub: "Equipment", task: "Stage Rigging Inspection", freq: "Annual", auth: "OSHA", action: "Inspection", by: "Qualified Person", cite: "OSHA General Duty" },
+            { cat: "Facilities", sub: "Recreational", task: "Swimming Pool Permit", freq: "Annual", auth: "County DOH", action: "Permit Renewal", by: "County DOH", cite: "10 NYCRR § 6-1.4" },
+            { cat: "Fire Safety", sub: "General", task: "Annual Fire Safety Inspection", freq: "Annually", auth: "NYSED / Fire Code", action: "Inspection", by: "Code Official", cite: "Ed. Law § 807-A" },
+            { cat: "Fire Safety", sub: "Drills", task: "Fire Evacuation Drills", freq: "12x Year", auth: "NYSED", action: "Drill Execution", by: "Principal", cite: "Ed. Law § 807" },
+            { cat: "Fire Safety", sub: "Drills", task: "Lockdown Drills", freq: "4x Year", auth: "NYSED", action: "Drill Execution", by: "Principal", cite: "Ed. Law § 807" },
+            { cat: "Fire Safety", sub: "Systems", task: "Fire Alarm System Testing", freq: "Annual", auth: "NYS Fire Code", action: "Testing", by: "Licensed Contractor", cite: "FCNYS § 907.8" },
+            { cat: "Fire Safety", sub: "Systems", task: "Sprinkler System Testing", freq: "Annual", auth: "NYS Fire Code", action: "Testing", by: "Licensed Contractor", cite: "FCNYS § 903.5" },
+            { cat: "Fire Safety", sub: "Equipment", task: "Fire Extinguishers (Visual)", freq: "Monthly", auth: "NYS Fire Code", action: "Visual Check", by: "In-House", cite: "FCNYS § 906.2" },
+            { cat: "Fire Safety", sub: "Equipment", task: "Fire Extinguishers (Service)", freq: "Annual", auth: "NYS Fire Code", action: "Service & Tag", by: "Licensed Contractor", cite: "FCNYS § 906.2" },
+            { cat: "Fire Safety", sub: "Kitchen", task: "Range Hood Inspection", freq: "Every 6 Months", auth: "NYS Fire Code", action: "Inspection", by: "Licensed Contractor", cite: "FCNYS § 607.3.3" },
+            { cat: "Fire Safety", sub: "Lighting", task: "Emergency Lights (Function)", freq: "Monthly (30s)", auth: "NYS Fire Code", action: "Functional Test", by: "In-House", cite: "FCNYS § 604.5" },
+            { cat: "Fire Safety", sub: "Power", task: "Emergency Generator (Run)", freq: "Monthly", auth: "NYS Fire Code", action: "Load Test", by: "In-House", cite: "FCNYS § 604.3" },
+            { cat: "Environmental", sub: "Water", task: "Lead in Water Testing", freq: "Every 3 Years", auth: "NYS DOH", action: "Sampling & Lab", by: "In-House/Lab", cite: "10 NYCRR § 67-4" },
+            { cat: "Environmental", sub: "Asbestos", task: "Asbestos 6-Month Surveillance", freq: "Every 6 Months", auth: "EPA (AHERA)", action: "Visual Inspection", by: "Designee", cite: "40 CFR § 763.92" },
+            { cat: "Environmental", sub: "Asbestos", task: "Asbestos Re-Inspection", freq: "Every 3 Years", auth: "EPA (AHERA)", action: "Full Inspection", by: "Licensed Inspector", cite: "40 CFR § 763.85" },
+            { cat: "Environmental", sub: "Pest Mgmt", task: "Pesticide Notification (IPM)", freq: "48hr Prior", auth: "NYSED", action: "Notify Occupants", by: "In-House", cite: "Ed. Law § 409-H" },
+            { cat: "Environmental", sub: "Fuel Tanks", task: "Petroleum Tank Registration", freq: "Every 5 Years", auth: "NYS DEC", action: "Submit Renewal", by: "In-House", cite: "6 NYCRR § 613-1" },
+            { cat: "Environmental", sub: "Chemical", task: "Chemical Inventory", freq: "Annual", auth: "OSHA", action: "Inventory Audit", by: "CHO", cite: "29 CFR § 1910.1450" },
+            { cat: "Health & Safety", sub: "Training", task: "Right-To-Know Training", freq: "Annual", auth: "PESH/OSHA", action: "Staff Training", by: "In-House/Vendor", cite: "29 CFR § 1910.1200" },
+            { cat: "Health & Safety", sub: "Training", task: "Bloodborne Pathogen", freq: "Annual", auth: "PESH/OSHA", action: "Staff Training", by: "In-House/Nurse", cite: "29 CFR § 1910.1030" },
+            { cat: "Health & Safety", sub: "Medical", task: "Eyewash Station", freq: "Weekly (Flush)", auth: "NYS Plumbing", action: "Activation Test", by: "In-House", cite: "PCNYS § 411" },
+            { cat: "Admin/Transportation", sub: "Planning", task: "School Safety Plan (SAVE)", freq: "Annual", auth: "NYSED", action: "Plan Update", by: "Safety Team/BOE", cite: "Ed. Law § 2801-A" },
+            { cat: "Admin/Transportation", sub: "Reporting", task: "Bus Accident Reporting", freq: "As Occurs", auth: "NYS DMV", action: "File Report", by: "Transportation", cite: "VTL § 600" },
+            { cat: "Admin/Transportation", sub: "Equipment", task: "AED Inspection", freq: "Monthly", auth: "NYSED", action: "Check Readiness", by: "Nurse/Vendor", cite: "Ed. Law § 917" }
+        ];
 
-        <div className="flex items-center gap-4">
-          <button onClick={() => setStep(3)} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-200">
-            <Building2 size={14} /> Buildings
-          </button>
-          <button onClick={() => signOut(auth)} className="p-2.5 bg-slate-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors border border-slate-200"><LogOut size={18} /></button>
-        </div>
-      </header>
+        const tbody = document.getElementById('complianceBody');
+        const searchInput = document.getElementById('searchInput');
+        const categoryFilter = document.getElementById('categoryFilter');
+        const rowCount = document.getElementById('rowCount');
 
-      <main className="flex-1 p-8 max-w-[1600px] mx-auto w-full">
-        {view === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
-             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Buildings</p>
-                  <p className="text-3xl font-black text-slate-900">{districts.buildings.length}</p>
-                </div>
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mandated Tasks</p>
-                  <p className="text-3xl font-black text-slate-900">{allVisibleTasks.length}</p>
-                </div>
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Compliance Rate</p>
-                  <p className="text-3xl font-black text-emerald-600">
-                    {allVisibleTasks.length > 0 ? Math.round((Object.keys(userRecords).length / allVisibleTasks.length) * 100) : 0}%
-                  </p>
-                </div>
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Upcoming Deadlines</p>
-                  <p className="text-3xl font-black text-amber-500">
-                    {allVisibleTasks.length - Object.keys(userRecords).length}
-                  </p>
-                </div>
-             </div>
+        function getFreqClass(freq) {
+            const f = freq.toLowerCase();
+            if (f.includes('annual') || f.includes('year')) return 'badge-annual';
+            if (f.includes('month') || f.includes('week')) return 'badge-periodic';
+            return 'badge-event';
+        }
 
-             <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
-                <div className="p-8 border-b border-slate-100 flex justify-between items-center">
-                   <h3 className="font-black uppercase tracking-tight text-lg">Detailed Compliance Inventory</h3>
-                   <div className="flex gap-2">
-                     <button onClick={() => setShowCustomTaskModal(true)} className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700">
-                       <Plus size={14} /> Add Personal Task
-                     </button>
-                   </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                        <th className="p-5">Category / Task</th>
-                        <th className="p-5">Authority / Citation</th>
-                        <th className="p-5">Frequency</th>
-                        <th className="p-5">Status</th>
-                        <th className="p-5">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {allVisibleTasks.map(task => {
-                        const record = userRecords[task.id];
-                        const dueDate = record ? calculateDueDate(record.lastCompleted, task.frequency) : 'Not Logged';
-                        const isOverdue = record && new Date(dueDate) < new Date();
+        function renderTable() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const categoryTerm = categoryFilter.value;
+            
+            let filtered = complianceData.filter(item => {
+                const matchesSearch = Object.values(item).some(val => val.toLowerCase().includes(searchTerm));
+                const matchesCategory = categoryTerm === "" || item.cat === categoryTerm;
+                return matchesSearch && matchesCategory;
+            });
 
-                        return (
-                          <tr key={task.id} className="group hover:bg-slate-50 transition-colors">
-                            <td className="p-5">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-[8px] font-black bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded uppercase">{task.category}</span>
-                                <span className="text-[8px] font-black text-slate-300 uppercase">/ {task.subcategory}</span>
-                              </div>
-                              <h4 className="font-black text-slate-800 text-sm">{task.task}</h4>
-                              <p className="text-[10px] text-slate-400 mt-1 line-clamp-1">{task.action}</p>
-                            </td>
-                            <td className="p-5">
-                              <div className="text-[10px] font-bold text-slate-700 uppercase">{task.authority}</div>
-                              <div className="text-[9px] font-medium text-slate-400">{task.citation || 'N/A'}</div>
-                            </td>
-                            <td className="p-5">
-                              <span className="text-[10px] font-black text-slate-600 bg-slate-100 px-2 py-1 rounded-md uppercase tracking-tight">{task.frequency}</span>
-                            </td>
-                            <td className="p-5">
-                              {record ? (
-                                <div className={`flex flex-col gap-1`}>
-                                  <span className="text-[9px] font-black text-emerald-600 uppercase flex items-center gap-1"><CheckCircle2 size={12}/> Completed</span>
-                                  <span className="text-[8px] font-bold text-slate-400">Due: {dueDate}</span>
-                                </div>
-                              ) : (
-                                <span className="text-[9px] font-black text-amber-500 uppercase flex items-center gap-1"><Circle size={12}/> Pending</span>
-                              )}
-                            </td>
-                            <td className="p-5">
-                              <button onClick={() => setEditingTask(task)} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-black transition-all">
-                                Update Log
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-             </div>
-          </div>
-        )}
+            tbody.innerHTML = filtered.map(item => `
+                <tr class="hover:bg-blue-50 transition-colors">
+                    <td class="p-4 border-b border-slate-200">
+                        <span class="block font-semibold text-blue-800">${item.cat}</span>
+                        <span class="text-xs text-slate-500">${item.sub}</span>
+                    </td>
+                    <td class="p-4 border-b border-slate-200 font-medium">${item.task}</td>
+                    <td class="p-4 border-b border-slate-200">
+                        <span class="badge ${getFreqClass(item.freq)}">${item.freq}</span>
+                    </td>
+                    <td class="p-4 border-b border-slate-200 text-xs font-bold uppercase">${item.auth}</td>
+                    <td class="p-4 border-b border-slate-200">
+                        <span class="block text-slate-700">${item.action}</span>
+                        <span class="text-[10px] text-slate-400">By: ${item.by}</span>
+                    </td>
+                    <td class="p-4 border-b border-slate-200 text-xs font-mono text-blue-600">${item.cite}</td>
+                </tr>
+            `).join('');
 
-        {view === 'admin' && isAdmin && (
-          <div className="animate-in fade-in slide-in-from-bottom-4">
-             <div className="flex justify-between items-center mb-8">
-                <div>
-                   <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Admin Control Center</h2>
-                   <p className="text-slate-400 font-medium text-sm">Manage global mandates pushed to all school districts.</p>
-                </div>
-                <button onClick={() => setShowAdminModal(true)} className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-black uppercase text-[11px] tracking-widest shadow-xl flex items-center gap-3">
-                  <PlusCircle size={18} /> Push New Global Mandate
-                </button>
-             </div>
+            rowCount.textContent = filtered.length;
+        }
 
-             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-               {masterTasks.map(t => (
-                 <div key={t.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 flex flex-col relative group overflow-hidden">
-                   <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                     <button className="text-slate-300 hover:text-red-500 transition-colors" onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_mandates', t.id))}>
-                       <Trash2 size={20} />
-                     </button>
-                   </div>
-                   <div className="flex items-center gap-2 mb-4">
-                     <span className="bg-blue-600 text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest">{t.category}</span>
-                     <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{t.authority}</span>
-                   </div>
-                   <h3 className="text-lg font-black text-slate-900 mb-2 leading-tight">{t.task}</h3>
-                   <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-slate-50">
-                      <div>
-                        <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Frequency</p>
-                        <p className="text-[10px] font-bold text-slate-700 uppercase">{t.frequency}</p>
-                      </div>
-                      <div>
-                        <p className="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Citation</p>
-                        <p className="text-[10px] font-bold text-slate-700">{t.citation || 'None'}</p>
-                      </div>
-                   </div>
-                 </div>
-               ))}
-             </div>
-          </div>
-        )}
-      </main>
+        searchInput.addEventListener('input', renderTable);
+        categoryFilter.addEventListener('change', renderTable);
 
-      {/* Task Update Modal */}
-      {editingTask && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in-95">
-            <div className="flex justify-between items-start mb-8">
-               <h3 className="text-xl font-black uppercase tracking-tight">Log Compliance Data</h3>
-               <button onClick={() => setEditingTask(null)}><X className="text-slate-300 hover:text-slate-900"/></button>
-            </div>
-            <form onSubmit={e => {
-              e.preventDefault();
-              logCompletion(editingTask.id, e.target.date.value, e.target.notes.value);
-            }} className="space-y-6">
-               <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Performed Date</label>
-                  <input name="date" type="date" required className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold" />
-               </div>
-               <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Evidence / Notes / Attachment Links</label>
-                  <textarea name="notes" placeholder="Vendor name, report ID, or cloud link to photos..." className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold min-h-[120px]" />
-               </div>
-               <button type="submit" className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl">Save Completion Log</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Shared Task Form (Modal) */}
-      {(showCustomTaskModal || showAdminModal) && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in-95 my-auto">
-            <div className="flex justify-between items-start mb-8">
-               <h3 className="text-xl font-black uppercase tracking-tight">
-                 {showAdminModal ? 'Create Global Mandate' : 'Add Custom District Task'}
-               </h3>
-               <button onClick={() => { setShowCustomTaskModal(false); setShowAdminModal(false); }}><X className="text-slate-300 hover:text-slate-900"/></button>
-            </div>
-            <form onSubmit={showAdminModal ? saveMasterTask : saveCustomTask} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Category</label>
-                 <select name="category" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold">
-                   <option>Facilities</option>
-                   <option>Fire Safety</option>
-                   <option>Environmental</option>
-                   <option>Health & Safety</option>
-                   <option>Transportation</option>
-                 </select>
-               </div>
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Subcategory</label>
-                 <input name="subcategory" required placeholder="e.g. Visual Inspection" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold" />
-               </div>
-               <div className="md:col-span-2">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Task Name</label>
-                 <input name="task" required placeholder="e.g. Monthly Fire Extinguisher Check" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold" />
-               </div>
-               <div className="md:col-span-2">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Action Required</label>
-                 <textarea name="action" required placeholder="Describe the physical steps required..." className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold min-h-[80px]" />
-               </div>
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Frequency</label>
-                 <select name="frequency" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold">
-                   {Object.keys(FREQUENCY_DAYS).map(f => <option key={f}>{f}</option>)}
-                 </select>
-               </div>
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Regulatory Authority</label>
-                 <input name="authority" required placeholder="e.g. NYSED, DOH" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold" />
-               </div>
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Performed By</label>
-                 <input name="performedBy" required placeholder="e.g. Head Custodian" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold" />
-               </div>
-               <div className="md:col-span-1">
-                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Citation</label>
-                 <input name="citation" placeholder="e.g. 8 NYCRR 155.4" className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl font-bold" />
-               </div>
-               <button type="submit" className="md:col-span-2 mt-4 bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-[11px] shadow-xl">
-                 {showAdminModal ? 'Push to All Districts' : 'Add to District Ledger'}
-               </button>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        // Initial render
+        renderTable();
+    </script>
+</body>
+</html>
